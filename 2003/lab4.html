@@ -1,0 +1,1200 @@
+<html>
+  <head>
+    <title>6.828 Fall 2003 Lab 4: System calls, IPC page faults,
+    and fork</title>
+  </head>
+
+  <body>
+    <h2>6.828 Fall 2003 Lab 4: System calls, IPC page faults, and
+    fork</h2> 
+    <p>
+    Handed out Wednesday, October 15 <br>
+    Part A due Thursday, October 23 <br>
+    Part B due Thursday, October 30 <br>
+    Part C due Thursday, November 6
+    <p>
+    Version: $Revision: 1.8 $.<br>
+    Last modified: $Date: 2003/10/28 01:22:50 $<p>
+
+    <h1>Introduction</h1>
+
+      In this lab you will implement the basic path through the
+      kernel that handles system calls.  To exercise the system
+      call code, you will add a primitive IPC system to allow
+      processes to communicate with each other.  Then you will move
+      on to a more sophisticated set of system calls, allowing
+      processes to handle their own page faults.  Finally, you will
+      use this page fault interface to implement the Unix
+      <code>fork</code> system call from user space.
+
+    <h1>Getting Started</h1>
+
+      Download the lab 4 code from <a
+      href="http://pdos.lcs.mit.edu/6.828/labs/lab4.tar.gz">
+      http://pdos.lcs.mit.edu/6.828/labs/lab4.tar.gz</a>, and unpack
+      it into your 6.828 directory as before.  You will need to
+      merge our new code for this lab into your source tree.  <p>
+
+      There have been many changes to the source tree.
+      We list all the changes and then afterward give instructions
+      for merging your current solutions into the tree.
+      <p>
+
+      Changes to files you have not edited: <ul>
+
+      <li>Added file <code>inc/syscall.h</code>, defining the system
+      call numbers.
+
+      <li>Added file <code>kern/syscall.h</code> defining the kernel
+      system call handler.
+
+      <li>Added file <code>kern/syscall.c</code>, containing
+      implementation of system calls.
+
+      <li>Removed file <code>lab3.S</code>, because it is lab
+      3-specific.
+
+      <li>Modified file <code>kern/env.h</code> to add
+	  <code>ENV_CREATE</code> macro for creating environments
+	  from binaries hard-coded in the kernel.  <br>
+
+	  Changed status to <code>ENV_NOT_RUNNABLE</code> for
+	  readability.  <br>
+
+	  Changed names of IPC state variables in <code>struct
+	  Env</code>.  <br>
+
+	  Changed prototype for <code>envid2env</code>.
+
+      <li>Modified file <code>kern/init.c</code> to create various
+          test programs.
+
+      <li>Modified file <code>GNUmakefile</code> to define some
+          useful targets.<br>
+
+	  Making <code>kernel.asm</code> produces a disassembly of
+	  the kernel.<br>
+
+	  Making <code>user/foo.asm</code> produces a disassembly
+	  of program <code>user/foo</code>.
+
+      <li>Modified file <code>inc/error.h</code> to rename
+          <code>E_IPC_BLOCKED</code> to <code>E_IPC_NOT_RECV</code>.
+
+      <li>Modified file <code>inc/mmu.h</code> to add <code>VPN</code>
+          macro for readability in later code.
+
+      <li>Modified <code>kern/Makefrag</code> to build various user
+          binaries into kernel.
+
+      <li>Added files in the <code>user/</code> directory to build
+          user programs.
+
+      <li>Modified <code>boot/Makefrag</code> and added
+          <code>boot/sign.pl</code> to add a signature to the boot
+          sector.  This should allow the boot sector to be used with
+          later versions of Bochs.
+      </ul>
+
+      <p>
+
+      Changes to files you have edited:
+
+      <ul>
+
+      <li>Modified file <code>kern/env.c</code> to free pages in
+          <code>env_free</code>.
+	  <br>
+
+	  Changed definition of <code>envid2env</code> to be
+	  consistent with other routines, returning error code
+	  directly, and also to add a permission-checking option.
+	  <br>
+
+	  Changed initialization in <code>env_alloc</code> to handle
+	  the new IPC fields in <code>struct Env</code>.
+
+      <li>Modified file <code>kern/trap.c</code> to add
+          <code>page_fault_handler</code>
+	  and a call to it from inside <code>trap</code>.
+
+      <li>Modified file <code>kern/pmap.c</code> to do a little
+	  more checking in <code>page_check</code>.  Also added
+	  <code>page_lookup</code> and <code>page_decref</code>.
+	  Reimplemented <code>page_remove</code> in terms of these.
+	  You will want to pick up the new functions, because they
+	  are useful for writing some of the code for this lab.  If
+	  you want our implementation, see the solutions to lab 2
+	  now on the web.
+
+      <li>Modified file <code>kern/printf.c</code> to update the
+	  error list.  (Just copy the new file and add your octal
+	  code again.)
+
+      </ul><p>
+
+      To merge your solutions from Lab 3 (and before) into
+      the <code>lab4/</code> tree:
+
+      <ul>
+      <li>Copy your <core>kern/locore.S</code>, <code>kern/printf.c</code>,
+          and <code>kern/sched.c</code> into the tree.
+      <li>Copy your <code>kern/trap.c</code> and then add our new
+          <code>page_fault_handler</code> function along with the code
+          in <code>trap</code> that calls it.
+      <li>Copy your <code>kern/env.c</code> and then add our new
+          <code>envid2env</code> and <code>env_free</code> functions. 
+          Also notice that the initialization in <code>env_alloc</code>
+          has changed slightly:
+
+<pre>
+	e->env_ipc_blocked = 0;
+	e->env_ipc_value = 0;
+	e->env_ipc_from = 0;
+</pre>
+          becomes
+<pre>
+	e->env_ipc_recving = 0;
+</pre>
+      <li>Copy your solutions from lab 2 into <code>kern/pmap.c</code>.
+          Don't just copy the file: you need to make sure you keep the
+          changes to <code>page_check</code> as well as the new 
+          <code>page_lookup</code> function, which you need to write
+          (feel free to look at our lab 2 solution).
+          <code>Page_lookup</code> will be useful for completing this lab.
+      </ul>
+
+      <p>
+
+
+      Once you have finished the merge, here are some things to
+      double-check.  <i>Do this before proceeding!</i>  You will
+      save yourself many headaches by getting these correct now,
+      before they cause hard-to-debug crashes.
+
+      <ul>
+
+      <li>Make sure that <code>page_check</code> still passes.
+	  There are some new tests in it that check your handling
+	  of reference counts.  If your handling is wrong, you might
+	  put a page on the free list incorrectly.
+
+      </ul>
+      <p>
+
+      If you build a kernel and run it after the merge, you should see:
+
+<pre>
+6828 decimal is 015254 octal!
+Physical memory: 32768K available, base = 640K, extended = 31744K
+...
+[00000000] new env 00000800
+[00000000] new env 00001001
+TRAP frame at 0xefbfffbc
+             edi  0x0
+             esi  0x0
+             ebp  0xeebfdfa8
+             oesp 0xefbfffdc
+             ebx  0x0
+             edx  0x800050
+             ecx  0x0
+             eax  0x1
+             es   0x23
+             ds   0x23
+             trap 0x30
+             err  0x0
+             eip  0x800b2e
+             cs   0x1b
+             flag 0x246
+             esp  0xeebfdf9c
+             ss   0x23
+panic at kern/trap.c:143: unhandled trap
+</pre>
+      All the elements in the trap frame should match.
+      The <code>trap</code> may be <code>0xd</code> (general protection fault)
+      if you have not added the system call trap (0x30) to the GDT yet.
+      <p>
+
+    <h1>Part A: System calls and IPC</h1>
+
+      <h2>System calls</h2>
+
+	User processes ask the kernel to do things for them by
+	invoking system calls.  When the user process invokes a system call,
+	the processor enters kernel mode,
+	the processor and the kernel cooperate
+	to save the user process's state,
+	the kernel executes appropriate code in order to carry out the system
+	call, and then resumes the user process.  The exact
+	details of how the user process gets the kernel's attention
+	and how it specifies which call it wants to execute vary
+	from system to system.
+        <p>
+
+	In V6, user processes executed the <code>sys</code> instruction
+	to get the kernel's attention.
+	The user process specifies the type of system call
+	with a constant in the instruction itself.  The
+	arguments to the system call are also in the instruction
+	stream, or in registers, or on the stack, or some combination
+	of the three.  The kernel passes the return value
+	back to the user process in <code>r0</code>.
+	<p>
+
+	In the x86 kernel, we will use the <code>int</code>
+	instruction, which causes a processor interrupt.  In
+	particular, we will use <code>int $0x30</code> as the system
+	call interrupt.  We have defined the constant
+	<code>T_SYSCALL</code> to 0x30 for you.  You will have to
+	set up the interrupt descriptor to allow user processes to
+	cause that interrupt.  Note that interrupt 0x30 cannot be
+	generated by hardware, so there is no ambiguity caused by
+	allowing user code to generate it.
+        <p>
+
+	In the x86 kernel, we will pass the system call number and
+	the system call arguments in registers.  This way, we don't
+	need to grub around in the user environment's stack
+	or instruction stream.  The
+	system call number will go in <code>%eax</code>, and the
+	arguments (up to five of them) will go in <code>%edx</code>,
+	<code>%ecx</code>, <code>%ebx</code>, <code>%edi</code>,
+	and <code>%esi</code>, respectively.  The kernel passes the
+	return value back in <code>%eax</code>.  The assembly code to
+	invoke a system call has been written for you, in
+	<code>syscall()</code> in <code>user/syscall.c</code>.  You
+	should read through it and make sure you understand what
+	is going on.
+        <p>
+
+	<h3>Implementation</h3>
+
+	  <h4>Sanity check</h4>
+
+	    Before you go any further, let's make sure that loading
+	    user environments still works.  <p>
+
+	    Look at <code>kern/init.c</code>: it creates two user
+	    environments (with the <code>ENV_CREATE</code> macro)
+	    from binaries that have been linked into the program.
+	    The binaries in the last lab were hand-written
+	    position-independent assembly stored in <code>lab3.S</code>.
+	    The binaries in this lab are compiled from C sources
+	    in the <code>user/</code> directory.  The program
+	    <code>user/foo</code> is linked into the kernel in such
+	    a way that <code>ENV_CREATE(user_foo)</code> calls
+	    <code>env_create</code> with the right arguments to
+	    start it running in a new environment.  <p>
+
+	    We'll start with the user environment <code>user/idle</code>
+	    (compiled from <code>user/idle.c</code>), which is a
+	    lot like <code>spin</code> from the last lab: it just
+	    loops.  This may seem like a rather useless program,
+	    but in fact it serves an important purpose.  When the
+	    kernel has nothing else to do, it can run the idle
+	    environment, which will keep the processor in user mode
+	    so that device interrupts can occur and trap back into
+	    the kernel.  <p>
+
+	    Edit <code>kern/init.c</code> and comment out the line
+	    "<code>ENV_CREATE(user_hello);</code>".  Now the only
+	    environment being created is <code>user/idle</code>.
+	    <p>
+
+	    Build the kernel and start Bochs.  Set a break point
+            at the loop in <code>idle</code>'s <code>umain</code>:
+	    <code>vb 0x1b:0x800054</code>.  Then boot the kernel.  When
+	    you reach the break point, step (<code>s</code>) a few
+	    times.  You should see:
+
+<pre>
+&lt;bochs:1&gt; vb 0x1b:0x800054
+&lt;bochs:2&gt; c
+6828 decimal is 15254 octal!
+...
+page_check() succeeded!
+             Setup timer interrupts via 8259A
+             unmasked timer interrupt
+(0) Breakpoint 1, 0x800054 (0x1b:0x800054)
+Next at t=9167210
+(0) 001b:00800054 (unknown context): ebfe: jmp +#fe
+<bochs:3> s
+Next at t=9167211
+(0) 001b:00800054 (unknown context): ebfe: jmp +#fe
+<bochs:4> s
+Next at t=9167212
+(0) 001b:00800054 (unknown context): ebfe: jmp +#fe
+<bochs:5> s
+Next at t=9167213
+(0) 001b:00800054 (unknown context): ebfe: jmp +#fe
+<bochs:6> 
+</pre>
+
+            (The <code>t=</code> numbers will be different.)
+	    If you do not see this, do not continue.  Go through
+	    your merge and figure out what was merged incorrectly.
+	    Re-check the list above.  <p>
+
+            To find the address of <code>idle</code>'s <code>umain</code>,
+            you can <code>gmake user/idle.asm</code> to generate a disassembly.
+            <p>
+
+            Change your scheduler (<code>sched_yield</code> in <code>kern/sched.c</code>)
+            to run the idle environment (<code>envs[0]</code>) only when no other
+            environments are runnable: any other environment should take priority
+            over the idle environment.
+            <p>
+            Rebuild your kernel, repeat the above sequence, and make sure you
+            still get the same results.
+
+	  <h4>System call path</h4>
+
+	    Add a handler for interrupt <code>T_SYSCALL</code>.
+	    You will have to edit <code>locore.S</code> and
+	    <code>kern/trap.c</code>'s <code>idt_init()</code>.  You
+	    also need to change <code>trap()</code> to handle the
+	    system call interrupt by calling <code>syscall</code>
+	    with the appropriate arguments and then arranging for
+	    the return value to be passed back to the user process
+	    in <code>%eax</code>.
+            Finally, you need to implement <code>syscall</code> in
+            <code>kern/syscall.c</code>.
+            Make sure <code>syscall</code> returns <code>-E_INVAL</code>
+            if the system call number is invalid.
+            You should read and understand <code>user/syscall.c</code>
+            (especially the inline assembly routine) in order to confirm
+            your understanding of the system call interface.
+            You may also find it helpful to read <code>inc/syscall.h</code>.
+            <p>
+
+            Uncomment the "<code>ENV_CREATE(user_hello)</code>".
+	    Compile and run your kernel.  It should print "<code>hello,
+	    world</code>" and then panic with a page fault from
+	    user mode.  If this does not happen, it probably means
+	    your system call handler isn't quite right.  <p>
+
+	  <h4>User-mode startup</h4>
+
+	    The user programs start running at the top of
+	    <code>user/entry.S</code>.  After some setup, this code
+	    calls <code>libmain()</code>, in <code>user/libos.c</code>.
+	    <code>Libmain</code> needs to initialize a global pointer
+	    <code>env</code> to point at this environment's
+	    <code>struct Env</code> in the <code>envs[]</code>
+	    array.  (<code>Entry.S</code> defined <code>envs</code>
+	    to point at the <code>UENVS</code> mapping you set up
+	    in lab 2.) Hint: look in <code>inc/env.h</code> and use
+	    <code>sys_getenvid</code>.  <p>
+
+	    <code>Libmain</code> calls <code>umain</code>, which,
+	    in the case of the hello program, is in
+	    <code>user/hello.c</code>.  Note that after printing
+	    "<code>hello, world</code>", it tries to access
+	    <code>env->env_id</code>.  This is why it faulted
+	    earlier.  Now that you've initialized <code>env</code>
+	    properly, it should not fault.
+            If it still faults, you probably haven't mapped the
+            <code>UENVS</code> area user-readable (back in lab 1 in 
+            <code>pmap.c</code>; this is the first time we've actually
+            used the <code>UENVS</code> area).
+
+	    Boot your kernel.  You should see <code>user/hello</code>
+	    print "<code>hello, world</code>" and then print "<code>i
+	    am environment 00001001</code>".  <p>
+
+	    Notice that <code>user/hello</code> calls <code>printf</code>.
+	    This is <i>not</i> the <code>printf</code> from the
+	    kernel.  (How could it be?  There's no <code>printf</code>
+	    system call!) Instead it is a user-space <code>printf</code>
+	    implemented in <code>user/printf.c</code> and linked
+	    into each user program.  This <code>printf</code> prints
+	    into a string buffer and then calls <code>sys_cputs</code>
+	    on the string.  (Recall that the kernel calls
+	    <code>cons_putc</code> on every character as it is ready
+	    to be printed.) <p>
+
+      <h2>Interprocess communication (IPC)</h2>
+
+	(Technically this is "inter-environment communication" or "IEC",
+	but everyone else calls it IPC, so we'll use the standard
+	term.) <p>
+
+	We've been focusing on the isolation aspects of the operating
+	system, the ways it provides the illusion that each program
+	has a machine all to itself.  Another important service of
+	an operating system is to allow programs to communicate
+	with each other when they want to.  It can be quite powerful
+	to let programs interact with other programs.  The UNIX
+	pipe model is the canonical example.  <p>
+
+	There are many models for interprocess communication. Even
+	today there are still debates about which models are better
+	for various reasons.  We won't get into that debate.  Instead,
+	we'll implement a simple IPC mechanism and then try it out.
+	<p>
+
+	<h3>Implementation</h3>
+
+	  You will implement a simple interprocess communication
+	  mechanism using the system call interface you just
+	  constructed.  It will allow environments to send integer
+	  values to other environments.  You will implement two
+	  system calls, <code>sys_ipc_recv</code> and
+	  <code>sys_ipc_can_send</code>.
+          Then you will implement two library wrappers
+          <code>ipc_recv</code> and <code>ipc_send</code>.
+          <p>
+
+	  To receive a value, an environment calls
+	  <code>sys_ipc_recv</code>, which deschedules the current
+	  environment and does not run it again until a value has
+	  been received.  <p>
+
+	  To try to send a value, an environment calls
+	  <code>sys_ipc_can_send</code> with both the receiver's
+	  environment id and the value to be sent.  If the named
+	  environment is actually receiving (it has called
+	  <code>sys_ipc_recv</code> and not gotten a value yet),
+	  then the send delivers the value and returns 0.  Otherwise
+	  the send returns <code>-E_IPC_NOT_RECV</code> to indicate
+	  that the target environment is not currently expecting
+	  to receive a value.  <p>
+
+	  A library function <code>ipc_recv</code> will take care
+	  of calling <code>sys_ipc_recv</code> and then looking up
+	  the information about the received values in the current
+	  environment's <code>struct Env</code>.  <p>
+
+	  Similarly, a library function <code>ipc_send</code> will
+	  take care of repeatedly calling <code>sys_ipc_can_send</code>
+	  until the send succeeds.  <p>
+
+	  <h4>System calls</h4>
+
+	    Implement <code>sys_ipc_recv</code> and
+	    <code>sys_ipc_can_send</code> in <code>kern/syscall.c</code>.
+            When you call <code>envid2env</code> in these routines, you should
+            set the <code>checkperm</code> flag to 0,
+	    meaning that any environment is allowed to send
+	    IPC messages to any other environment,
+	    and the kernel does no special permission checking
+	    other than verifying that the target envid is valid.
+	    Currently <code>envid2env</code> just ignores this flag anyway,
+	    but later in this lab you will enhance it
+	    with permission checking support.
+            <p>
+	    Implement the user-space calls in
+	    <code>user/syscall.c</code>.  <p>
+
+	  <h4>Library wrappers</h4>
+
+	    Implement <code>ipc_recv</code> and <code>ipc_send</code>
+	    in <code>user/ipc.c</code>.  <p>
+
+	    Change <code>kern/init.c</code> to start <i>two</i>
+	    copies of <code>user/pingpong2</code> instead of
+	    <code>user/hello</code>.  (Note that it's
+	    <code>pingpong2</code> and <i>not</i> <code>pingpong1</code>
+	    and <i>not</i> <code>pingpong</code>.) <p>
+
+	    Boot your kernel.  You should see:
+<pre>
+[00000000] new env 00000800
+[00000000] new env 00001001
+[00000000] new env 00001802
+1802 got 0 from 1001
+1001 got 1 from 1802
+1802 got 2 from 1001
+1001 got 3 from 1802
+1802 got 4 from 1001
+1001 got 5 from 1802
+1802 got 6 from 1001
+1001 got 7 from 1802
+1802 got 8 from 1001
+1001 got 9 from 1802
+[00001001] exiting gracefully
+[00001001] free env 00001001
+1802 got 10 from 1001
+[00001802] exiting gracefully
+[00001802] free env 00001802
+</pre>
+
+            <i>Challenge</i>!!!  <code>Ipc_send</code> is not very fair.
+            Run three copies of <code>user/fairness</code> and you will
+            see this.  The first two copies are both trying to send to 
+            the third copy, but only one of them will ever succeed.
+            Make the IPC fair, so that each copy has approximately
+            equal chance of succeeding.
+            <p>
+
+	    <i>Challenge</i>!!!  Why does <code>ipc_send</code>
+	    have to loop?  Change the system call interface so it
+	    doesn't have to.  Make sure you can handle multiple
+	    environments trying to send to one environment at the
+	    same time.
+            <p>
+
+	  <!-- Challenge problems: other IPC, matrix multiply, power
+	  series -->
+
+      <p> This ends part A.  As usual, you can grade your submission
+      with <code>gmake grade</code> and hand it in with <code>gmake
+      handin</code>.  If you are trying to figure out why a particular
+      test case is failing, run <code>sh grade.sh -x</code>, which will
+      show you the output of the kernel builds and Bochs runs for each
+      test, until a test fails.  When a test fails, the script will stop,
+      and then you can inspect <code>bochs.out</code> to see what the
+      kernel actually printed.
+
+    <h1>Part B: Page fault handling from kernel and user modes</h1>
+
+      <h2>Page faults and memory protection</h2>
+
+        Memory protection is a crucial feature of an operating system.
+        By using memory protection, the operating system can ensure that
+        bugs in one program cannot corrupt other programs or corrupt the operating
+        system itself.
+	<p>
+
+        Typically, operating systems rely on hardware support
+	to implement memory protection. 
+        The OS keeps the hardware informed about which virtual addresses
+        are valid and which are not.  When a program tries to access an invalid
+        address or one for which it has no permissions, the processor stops the
+        program at the instruction causing the fault and then traps
+        into the kernel with information about the attempted operation.
+	If the fault is fixable, the kernel can fix it and let the program 
+        continue running.  If the fault is not fixable, then the program cannot
+        continue, since it will never get past the instruction causing the fault.
+        <p>
+
+        As an example of a fixable fault, consider an automatically extended stack.
+        In many systems the kernel allocates a single stack page, and then
+        if a program faults accessing pages further down the stack, the kernel
+        will allocate those pages automatically and let the program continue.
+        By doing this, the kernel only allocates the memory that the program
+        is going to use, but the program can work under the illusion that it
+        has an arbitrarily large stack.
+        <p>
+
+        System calls present an interesting problem for memory protection.
+        Most system call interfaces let user programs pass pointers to the 
+        kernel.  These pointers point at user buffers to be read or written.
+        The kernel then dereferences these pointers on behalf of the user
+        while carrying out the system call.
+        There are two problems with this.
+        <p>
+
+        First, a page fault in the kernel
+        is taken a lot more seriously than a page fault in a user program.
+        If the kernel page faults, that's usually a kernel bug, and the
+        fault handler will panic.  We need a way to remember that the 
+        page fault is on behalf of a user program.
+        <p>
+
+        Second, the kernel typically has more memory permissions than the user program.
+        The user program might ask the kernel to read from or write to a
+        location in kernel memory that the user program cannot access but that
+        the kernel can.
+	If the kernel is not careful,
+	a buggy or malicious user program can trick the kernel
+	into using its greater privilege in unintended ways,
+	possibly so as to destroy the integrity of the kernel completely.
+	This danger is one instance of a classic security problem
+	known as the "confused deputy" problem.
+	The kernel is acting as a trusted "deputy",
+	which has the special privileges necessary
+	to implement important services needed by untrusted users -
+	but if users can confuse the kernel into using those special privileges
+	in unintended ways, the security model breaks down.
+            (<i>Challenge</i>!!! Explore the literature
+		on the confused deputy problem
+		available on the Internet,
+		and identify other aspects of the design of this toy kernel
+		and existing well-known operating systems
+		in which this security risk may occur.)
+            <p>
+
+        For both of these reasons the kernel must be careful when 
+        handling pointers presented by user programs.
+
+        <h3>Implementation</h3>
+
+          In your kernel, you will implement solutions to these two problems.
+          <p>
+
+          To address the first problem, you will use a global variable <code>page_fault_mode</code>
+          to let the fault handler know when the kernel is manipulating memory
+          on behalf of the user environment.  If a fault happens then, 
+          the user environment will be destroyed.  (Otherwise, if a fault happens,
+          the kernel should panic.)
+          <p>
+
+          To address the second problem, you will "sanitize" all user pointers
+          by using <code>TRUP</code> ("TRanslate User Pointer").
+	  This macro will leave valid user pointers
+          as is, but will translate all other pointers to <code>ULIM</code>,
+          which will definitely cause a page fault when accessed.
+          <p>
+
+          <h4>Sanity check</h4>
+
+            Make sure that the fault path from the last lab still works.
+            Change <code>kern/init.c</code> to run <code>user/fault</code>.
+            Run the kernel.
+            The kernel should panic inside the page fault handler.
+            You should see:
+
+            <pre>
+[00000000] new env 00000800
+[00000000] new env 00001001
+TRAP frame at 0xefbfffbc
+             edi  0x0
+             esi  0x801028
+             ebp  0xeebfdfc8
+             oesp 0xefbfffdc
+             ebx  0x70
+             edx  0xeec00074
+             ecx  0x0
+             eax  0x1
+             es   0x23
+             ds   0x23
+             trap 0xe
+             err  0xfffe
+             eip  0x800053
+             cs   0x1b
+             flag 0x10296
+             esp  0xeebfdfc8
+             ss   0x23
+panic at kern/trap.c:174: page fault
+            </pre>
+
+          You may see <code>6</code> for <code>err</code>, and slightly different
+          values for <code>esi</code> and <code>ebx</code>.  That's okay.
+          All the other fields should match identically.
+
+          <h4>Page fault mode</h4>
+
+            Change <code>kern/trap.c</code>'s page fault handler.
+            If a page fault happens while in kernel mode, check the setting
+            of <code>page_fault_mode</code> and act accordingly. 
+            <code>Inc/mmu.h</code> explains the possible page fault modes.
+            If you destroy the current environment, print a message explaining
+            the fault in the format:
+<pre>
+printf("[%08x] PFM_KILL va %08x ip %08x\n", curenv->env_id, va, tf->tf_eip);
+</pre>
+            <p>
+
+            Hint: to determine whether a fault happened in user mode or
+            in kernel mode, check the low bits of the <code>tf_cs</code>.
+            <p>
+
+            Change <code>kern/syscall.c</code> to set the page fault mode
+            correctly when handling the user pointer in <code>sys_cputs</code>.
+            Make sure you reset the page fault mode when the code finishes
+            handling the user pointer.
+            <p>
+
+            Change <code>kern/init.c</code> to run <code>user/buggyhello</code>
+            instead of <code>user/hello</code>.  Compile your kernel and boot it.
+            The environment should be destroyed, and the kernel should not panic.
+            You should see:
+
+            <pre>
+[00000000] new env 00000800
+[00000000] new env 00001001
+[00001001] PFM_KILL va 00000001 ip f010263d
+[00001001] free env 00001001
+            </pre>
+            (Your <code>ip</code> may be different but should begin <code>f01</code>.)
+          <h4>TRUP</h4>
+
+            The check you added protects against buggy environments that pass
+            invalid pointers, but does not protect against evil environments that
+            pass pointers to valid kernel memory.  <code>User/evilhello</code>
+            is one such program.
+            <p>
+
+            Change the definition of <code>sys_cputs</code> to protect itself 
+            against malicious user environments by using <code>TRUP</code>.
+            <p>
+
+            Change <code>kern/init.c</code> to run <code>user/evilhello</code>.
+            Compile your kernel and boot it.  The environment should be destroyed,
+            and the kernel should not panic.  You should see:
+
+            <pre>
+[00000000] new env 00000800
+[00000000] new env 00001001
+[00001001] PFM_KILL va ef800000 ip f010263d
+[00001001] free env 00001001
+            </pre>
+            (Your <code>ip</code> may be different but should begin <code>f01</code>.)
+
+      <h2>User-level page fault handling</h2>
+
+        Most page faults encountered during normal program execution
+        are fixable, like the stack example we saw earlier.
+        A typical kernel must track, for each environment, the various
+        regions of memory that are mapped and what to do when faults happen in them.
+        For example, we saw that a fault in the stack region will typically
+        map in a new page.  A fault in the BSS region will typically map in a
+        new page and also make sure it is zeroed.  In systems with demand-paged
+        executables, a fault in the text region will read the corresponding page
+        of the binary off of disk and then map it in.
+        <p>
+
+        This is a lot of information for the kernel to track and get right.
+        Instead, we will push this functionality into user space, where
+        bugs are less damaging.  This has the added benefit of allowing 
+        programs great flexibility in defining their memory regions.
+        As we will see, this allows so much flexibility that we can 
+        implement <code>fork()</code> as a user space library routine.
+        <p>
+
+        <h3>Implementation</h3>
+
+          We will provide this functionality
+	  by allowing user environments to handle their own 
+          page faults.  During standard execution, a user program will
+          run on the user stack
+	  (its top located at virtual address <code>USTACKTOP</code>).
+	  When a page
+          fault occurs in user mode, the kernel will restart the user environment
+          running the user-level page fault handler on a different stack,
+          the user exception stack (its top at <code>UXSTACKTOP</code>).
+          The page fault handler can use system calls to map new pages
+          in order to fix the fault.  Then the page fault handler will return,
+	  via an assembly language stub,
+	  to the faulting code on the original stack. 
+          We will call the state of the user environment at the time of the 
+          fault the <i>trap-time</i> state.  
+          <p>
+  
+            <h4>Memory allocation</h4>
+
+            Each user environment will need to allocate memory for its exception
+            stack.  To allow this, implement the <code>sys_mem_alloc</code> 
+            system call in <code>kern/syscall.c</code> and <code>user/syscall.c</code>.
+            Note that you will have to choose the error codes to return for
+            the error checking you implement.
+            <p>
+
+          <h4>Page fault handler</h4>
+
+            You will add a new system call <code>sys_set_pgfault_handler()</code>
+            that allows an environment to register a page fault handler and a stack.
+            The call "<code>sys_set_pgfault_handler(envid, handler, stacktop)</code>"
+            will change the page fault handler for the environment <code>envid</code>.
+            When a page fault occurs in user mode for the target environment,
+            the kernel will call the user environment's <code>handler</code>
+            running on the stack whose top is <code>stacktop</code>.
+            <p>
+
+            For this and all system calls that use environment ids, we will
+            adopt the convention that id 0 means "the current environment".
+            This convention is implemented by <code>envid2env</code>.
+
+            Implement <code>sys_set_pgfault_handler</code> in
+            <code>kern/syscall.c</code>.  When you call <code>envid2env</code>,
+            set <code>checkperm</code> to 1, so that an environment can only
+            change the page fault handler for itself or for a child.
+            <p>
+
+            Write the <code>checkperm</code> case in <code>kern/env.c</code>'s
+            <code>envid2env</code> to implement the permission checking
+            just described.
+
+            Implement <code>sys_set_pgfault_handler</code> in 
+            <code>user/syscall.c</code>.  
+            <p>
+
+            Change <code>kern/trap.c</code>'s <code>pgfault</code> to handle
+            faults from user mode as follows.
+            <p>
+
+            If there is no page fault handler registered, the user environment
+            should be destroyed with a message like before, except say
+            "<code>user fault</code>" instead of "<code>PFM_KILL</code>".
+            <p>
+
+            Otherwise, set up
+            a trap frame on the exception stack that looks like this:
+
+<pre>
+            &lt;-- env_xstacktop
+empty
+empty
+empty
+empty
+empty
+tf-&gt;tf_eip
+tf-&gt;tf_eflags
+tf-&gt;tf_esp
+tf-&gt;tf_err
+fault_va    &lt;-- %esp when handler is run
+</pre>
+
+            and then arranging for the user environment to resume execution
+            with the page fault handler running on that stack (you must figure
+            out how to make this happen).
+	    Each <code>empty</code> line in the frame above is simply
+	    a 32-bit word-size space on the exception stack
+	    that the kernel does not initialize,
+	    but the fault handler in the user environment can use.
+	    The <code>fault_va</code> is the virtual address
+	    at which the page fault occurred.
+            <p>
+
+            Remember that <code>env_xstacktop</code> is a pointer given
+            to the kernel by a user program.  Treat it with the appropriate
+            caution.
+            <p>
+
+            If <code>tf->tf_esp</code> is already on the user exception stack,
+            then the page fault handler itself has faulted.  In this case,
+            you should start the new stack frame just under the current
+            <code>tf->tf_esp</code> rather than under <code>env_xstacktop</code>:
+<pre>
+            &lt;-- tf-&gt;tf_esp
+empty
+empty
+empty
+empty
+empty
+tf-&gt;tf_eip
+tf-&gt;tf_eflags
+tf-&gt;tf_esp
+tf-&gt;tf_err
+fault_va    &lt;-- %esp when handler is run
+</pre>
+            <p>
+
+            To test whether <code>tf->tf_esp</code> is already on the user
+            exception stack, check whether it is in the range
+            <code>[env->env_xstacktop-BY2PG, env->env_xstacktop-1]</code>.
+            <!-- next year we should have xstacktop and xstackbottom, or just
+             hard code the stack location -->
+            <p>
+
+            You should not need to sanity check the fault handler <code>%eip</code>:
+            let the memory protection hardware do that for you.
+            <p>
+
+            Three of the empty words are for the assembly routine to use to save
+            the caller-save registers before moving on to C code.  The other two are
+            also important for the recursive fault case.  If you get stuck,
+            draw a stack diagram for the recursive case and look at how
+            each word gets used.
+            <p>
+
+            Next, you need to implement the assembly routine that will
+            take care of calling the C page fault handler and resume
+            execution at the original faulting instruction.
+            This assembly routine is the handler that will be registered
+            with the kernel.
+            <p>
+
+            Implement <code>__asm_pgfault_handler</code> in <code>user/entry.S</code>.
+            There is a commented outline there to help you along.
+            You may find it useful to reread the description from the beginning
+            of this section as well.
+            <p>
+
+            Finally, you need to implement the C user library side of all this.
+            Finish <code>set_pgfault_handler</code> in <code>user/pgfault.c</code>.
+  
+          <h4>Testing</h4>
+            Change <code>kern/init.c</code> to run <code>user/fault</code>.
+            Build your kernel and run it.  You should see:
+
+            <pre>
+[00000000] new env 00000800
+[00000000] new env 00001001
+[00001001] user fault va 00000000 ip 0080008b
+[00001001] free env 00001001
+            </pre>
+            <p>
+
+            Change <code>kern/init.c</code> to run <code>user/faultdie</code>.
+            Build your kernel and run it.  You should see:
+
+            <pre>
+[00000000] new env 00000800
+[00000000] new env 00001001
+i faulted at va deadbeef, err 6
+[00001001] exiting gracefully
+[00001001] free env 00001001
+            </pre>
+            <p>
+
+            Change <code>kern/init.c</code> to run <code>user/faultalloc</code>.
+            Build your kernel and run it.  You should see:
+
+            <pre>
+[00000000] new env 00000800
+[00000000] new env 00001001
+fault deadbeef
+this string was faulted in at deadbeef
+fault cafebffe
+fault cafec000
+this string was faulted in at cafebffe
+[00001001] exiting gracefully
+[00001001] free env 00001001
+            </pre>
+            <p>
+
+            If you see only the first "this string" line,
+            it means you are not handling
+            recursive page faults properly.
+            <p>
+
+            Change <code>kern/init.c</code> to run <code>user/faultallocbad</code>.
+            Build your kernel and run it.  You should see:
+
+            <pre>
+[00000000] new env 00000800
+[00000000] new env 00001001
+[00001001] PFM_KILL va deadbeef ip f010263d
+[00001001] free env 00001001
+            </pre>
+            (Your ip may differ from ours but should begin <code>f01</code>.)
+            <p>
+
+            Make sure you understand why <code>user/faultalloc</code> and
+            <code>user/faultallocbad</code> behave differently.
+            <p>
+
+      This ends part B.  As usual, you can grade your submission
+      with <code>gmake grade</code> and hand it in with <code>gmake
+      handin</code>.
+
+    <h1>Part C: User-level fork</h1>
+
+      As the final piece of this lab, you will implement the UNIX 
+      <code>fork</code> system call as a user space library routine, 
+      using the system calls you implemented in part B along with
+      a couple new ones.
+
+      <h2>Fork</h2>
+
+        As its process creation primitive, UNIX provides the <code>fork</code>
+        system call.  Fork copies the calling process (the parent) to create
+        a new process (the child).
+        The only differences between the two observable from user space
+        are their process IDs and parent process IDs (as returned by
+        <code>getpid</code> and <code>getppid</code>).  In the parent,
+        <code>fork</code> returns the child's process ID.
+        In the child, <code>fork</code> returns 0.
+        The two processes do not share any memory: writes to one 
+        process's memory do not appear in the other and vice versa.
+        <p>
+
+        V6 UNIX implemented <code>fork</code> by copying the parent's
+        segments into new memory for the child.  This was, by far, the most
+        expensive part of the call.  Since <code>fork</code> is so often
+        followed by <code>exec</code> in the child (for example, in the shell), these
+        copies are often wasted.  
+        <p>
+
+        Later versions of UNIX took advantage
+        of virtual memory hardware to allow the parent and child to share
+        the memory until one of them modified it.  
+        To do this, the kernel marked the now-shared pages not writable.
+        When one of the two processes tried to write to the page,
+        it would fault.  At this point, the kernel would realize that the page
+        was really "copy-on-write" and make a private copy for the
+        faulting process.  In this implementation, pages aren't copied until 
+        they were written to.  This makes <code>fork</code> followed by
+        <code>exec</code> in the child much cheaper: the child would probably
+        only copy one page (its current stack page) before calling <code>exec</code>.
+        <p>
+
+        You'll implement a copy-on-write <code>fork</code> now,
+        but entirely from user space.  This has the benefit that the kernel
+        support is much simpler and thus more likely to be correct.
+        It also lets programs define their own semantics for <code>fork</code>.
+        A program that wanted a slightly different implementation
+        (for example, the expensive always-copy version
+        or one in which the parent and child shared memory afterward)
+        can easily provide its own.
+
+        <h3>Implementation</h3>
+
+          You will add a new system call <code>sys_env_alloc</code>
+          which creates a new environment with an almost blank slate: no address
+          space, no page fault handler, and not runnable.
+          The new environment will have the same register state as the
+          parent environment at the time of the call.  The only difference
+          is that in the parent, <code>sys_env_alloc</code>
+          will return the id of the newly created environment, but
+          in the child it will return 0.
+          (The child will be marked as not runnable, so
+          <code>sys_env_alloc</code> will not return in the child
+          until the parent has explicitly allowed this by marking the child runnable.)
+          <p>
+
+          Then you will add system calls to manipulate this blank slate:
+          <code>sys_map_mem</code> and <code>sys_unmap_mem</code> allow you
+          to modify the virtual address space, and
+          <code>sys_set_pgfault_handler</code> from part B manipulates the 
+          page fault handlers.
+          <p>
+
+          Using these primitives you will build
+          <code>fork</code> itself.  <code>Fork</code> will create a new
+          environment, copy the state from the current environment into the
+          new environment, and then set it running.  
+
+	  <h4>System calls</h4>
+
+            Implement <code>sys_env_alloc</code>,
+            <code>sys_mem_map</code>, 
+            <code>sys_mem_unmap</code>, and
+            <code>sys_set_env_status</code> in <code>kern/syscall.c</code>
+            and <code>user/syscall.c</code>.
+            <p>
+  
+            Change <code>kern/init.c</code> to run <code>user/pingpong1</code>
+            (start just one instance of it).
+            Build and boot the kernel.  You should see:
+  
+            <pre>
+[00000000] new env 00000800
+[00000000] new env 00001001
+[00001001] new env 00001802
+send 0 from 1001 to 1802
+1802 got 0 from 1001
+1001 got 1 from 1802
+1802 got 2 from 1001
+1001 got 3 from 1802
+1802 got 4 from 1001
+1001 got 5 from 1802
+1802 got 6 from 1001
+1001 got 7 from 1802
+1802 got 8 from 1001
+1001 got 9 from 1802
+[00001001] exiting gracefully
+[00001001] free env 00001001
+1802 got 10 from 1001
+[00001802] exiting gracefully
+[00001802] free env 00001802
+            </pre>
+
+          <h4>Fork</h4>
+
+            Implement <code>fork</code> and <code>pgfault</code>
+            in <code>user/fork.c</code>.
+            The control flow for <code>fork</code> is as follows:
+            <p>
+            <ol>
+            <li>The parent installs <code>pgfault</code> using 
+                <code>set_pgfault_handler</code>.
+            <li>The parent calls <code>sys_env_alloc()</code> to allocate 
+                a child environment.
+            <li>For each writable or copy-on-write page in its address space below UTOP,
+                the parent maps the page copy-on-write into the address
+                space of the child and then remaps the page copy-on-write
+                in its own address space.
+                <p>
+                The exception stack is <i>not</i> remapped this way.
+                Instead you need to allocate a fresh page in the child for
+                the exception stack.  Since the page fault handler will be 
+                doing the actual copying and the page fault handler runs
+                on the exception stack, the exception stack cannot be made
+                copy-on-write: who would copy it?
+            <li>The parent sets the user page fault handler for the child
+                to look like its own.
+            <li>The child is now ready to run, so the parent marks it runnable.
+            </ol>
+            <p>
+
+            After the fork, both processes will fault while trying to 
+            execute their code.  Here's the control flow for the user page fault
+            handler:
+            <p>
+            <ol>
+            <li>Kernel propagates page fault to <code>asm_pgfault_handler</code>,
+                which calls <code>pgfault_handler</code>.
+            <li><code>Pgfault_handler</code> checks that the fault is a write
+                (check <code>FEC_WR</code>) and that the pte for the page is
+                marked <code>PTE_COW</code>.  If not, panic.
+            <li><code>Pgfault_handler</code> allocates a new page mapped
+                at a temporary location and copies
+                the current page contents into it.  Then it maps the new page at the
+                appropriate address.
+            </ol>
+            <p>
+
+            Change <code>kern/init.c</code> to run <code>user/pingpong</code>
+            (<i>not</i> <code>pingpong1</code> and not <code>pingpong2</code>).
+            You should see the same output you saw for <code>pingpong1</code>.
+            <p>
+
+            Change <code>kern/init.c</code> to run <code>user/primes</code>.
+            You should see:
+
+            <pre>
+[00000000] new env 00000800
+[00000000] new env 00001001
+[00001001] new env 00001802
+2 [00001802] new env 00002003
+3 [00002003] new env 00002804
+5 [00002804] new env 00003005
+7 [00003005] new env 00003806
+11 [00003806] new env 00004007
+...
+            </pre>
+            <p>
+
+            You might find it interesting to read <code>user/primes.c</code>
+            to see all the forking and IPC going on behind the scenes.
+            <p>
+
+            <i>Challenge</i>!!! Implement a shared-memory <code>fork</code>
+            called <code>sfork</code>.  This version should have the parent
+            and child sharing all their memory pages (writes in one environment
+            appear in the other) except for pages in the stack area, which
+            should be treated in the usual copy-on-write manner.
+            Use it to run <code>user/pingpongs</code>.
+            You will have to find a new way to provide the functionality
+            of the global <code>env</code> pointer.
+            <p>
+
+            <i>Challenge</i>!!! The prime sieve is only one neat use of
+            message passing between a large number of concurrent programs.
+            Read C. A. R. Hoare, ``Communicating Sequential Processes,''
+            <i>Communications of the ACM</i> 21(8) (August 1978), 666-667,
+            and implement the matrix multiplication example.
+            <p>
+
+            <i>Challenge</i>!!! Probably the most impressive example of 
+            the power of message passing is Doug McIlroy's power series
+            calculator, described in 
+            <a href="http://plan9.bell-labs.com/who/rsc/thread/squint.pdf"
+            >M. Douglas McIlroy, ``Squinting at 
+            Power Series,'' <i>Software--Practice and Experience</i>, 20(7)
+            (July 1990), 661-683</a>.  Implement his
+            power series calculator and compute the power series for 
+            <i>sin</i>(1+<i>x</i>^2).
+            <p>
+
+            <i>Challenge</i>!!! Your implementation of <code>fork</code> 
+            makes a huge number of system calls.  On the x86, switching into
+            the kernel has non-trivial cost.  Augment the system call interface
+            so that it is possible to send a batch of system calls at once.
+            Then change <code>fork</code> to use this interface.
+            How much faster is your new <code>fork</code>?
+            <p>
+
+      <p>
+      This ends part C.  As usual, you can grade your submission
+      with <code>gmake grade</code> and hand it in with <code>gmake
+      handin</code>.
+
+
+  </body>
+</html>
+
+

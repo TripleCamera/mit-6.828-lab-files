@@ -1,0 +1,617 @@
+<html>
+<head>
+<title>6.828 Fall 2003 Lab 1: PC Bootstrap and GCC Calling Conventions</title>
+</head>
+<body>
+<h2>6.828 Fall 2003 Lab 1</h2>
+<h1>PC Bootstrap and Calling Conventions</h1>
+<p>
+<b>Handed out Monday, September 8, 2003<br>
+Due Thursday, September 18, 2003</b>
+<p>
+<b>Software Setup</b>
+<p>
+The lab files are available at <a href="http://pdos.lcs.mit.edu/6.828/labs/lab1.tar.gz"
+><tt>http://pdos.lcs.mit.edu/6.828/labs/lab1.tar.gz</tt></a>.
+To install them in your Athena account, do:
+<pre>
+athena% <b>cd ~/6.828</b>
+athena% <b>wget http://pdos.lcs.mit.edu/6.828/labs/lab1.tar.gz</b>
+athena% <b>gtar xzvf lab1.tar.gz</b>
+athena% <b>cd lab1</b>
+athena% 
+</pre>
+<p>
+We have set up software in the 6.828 locker so that you
+can do the boot loader part of the lab on either Sun or Linux
+Athena workstations.
+The setjmp/longjmp part requires Linux.
+<p>
+<b>Hand-In Procedure</b>
+<p>
+When you are ready to hand in your lab,
+run <tt>gmake handin</tt> in the <tt>lab1</tt>
+directory.
+This will submit the files <tt>lab1/boot/bootc.c</tt> and <tt>lab1/jmp/jmp.S</tt>.
+<p>
+You do not need to turn in answers to any of the questions in the text of the lab.
+(Do answer them for yourself though!  They will help with the rest of the lab.)
+<p>
+We will be grading your solutions with a grading program.
+You can run <tt>gmake grade</tt> in <tt>lab1/boot</tt> or <tt>lab1/jmp</tt> to test your solutions 
+with the grading program.
+<p>
+<h2>Introduction</h2>
+<p>
+This lab is split into two parts.
+The first part concentrates on the PC bootstrap procedure, 
+particularly link address, load address, writing position independent code,
+and relocation.
+It should give you a good sense of how
+the boot loader takes the boot-time CPU state 
+and prepares the CPU to run actual C code.
+<p>
+The second part checks your understanding of the GCC calling conventions
+and stack layout for the x86.
+You will write an implementation of <tt>setjmp</tt> and <tt>longjmp</tt>.
+<p>
+<h2>Getting Started with x86 assembly</h2>
+
+<p>
+If you are not already familiar with x86 assembly the <a href=
+"../readings/pcasm.pdf">PC Assembly Language Book</a> is an excellent
+place to start. Hopefully, the book contains mixture of new and old
+material for you. We recommend reading the entire book, except you
+should skip all sections after 1.3.5 in chapter 1, and you can also
+skip chapters 5 and 6, and all sections under 7.2.
+</p>
+
+<p><i>Warning:</i> Unfortunately the examples in the book are
+written for the NASM assembler, whereas we will be using
+the GNU assembler. NASM uses the so-called <i>Intel</i> syntax
+while GNU uses the <i>AT&amp;T</i> syntax. While semantically
+equivalent, an assembly file will differ quite a lot, at least
+superficially, depending on which syntax is used. Luckily the
+conversion between the two is pretty simple, and is covered in <a
+href=
+"http://www.cs.princeton.edu/courses/archive/fall99/cs318/Files/djgpp.html">
+this reference</a>. Only read the section "The Syntax".</p>
+
+<p>Surely the definitive reference is <a href=
+"../readings/intelv2.pdf">Intel's instruction set
+architecture reference.</a></p>
+
+<p>You should read the recommended chapters of the PC assembly
+book, and "The Syntax" section of the second reference now. Save
+the Intel document for later.</p>
+
+<h2>Part 1: PC Bootstrap</h2>
+<p>
+<b>Boot Time</b>
+<p>
+Start bochs using our first example bootstrap block:
+<pre>
+athena% <b>cd ~/6.828/lab1/boot</b>
+athena% <b>gmake ex1.disk</b>
+...
+athena% <b>bochs</b>
+</pre>
+You should see:
+
+<pre>
+Next at t=0
+(0) f000:fff0: e968e0: jmp +#e068
+&lt;bochs:1&gt; 
+</pre>
+
+From this you can conclude a few things: 
+
+<ul>
+<li>The IBM PC starts executing at <tt>CS = 0xf000</tt> and <tt>IP
+= 0xfff0</tt>.</li>
+
+<li>The first instruction executed is a relative <tt>jmp</tt>,
+which jumps by the amount +#e068. (You know this is the first
+instruction because "Next at t=0"). A relative jump means that this
+value is added to the IP. And since this value has the high-bit
+set, we can see that this particular <tt>jmp</tt> will be backwards--to a
+lower IP.</li>
+
+<li>The machine code for the instruction is 0xe968e0.</li>
+
+<li>The whole instruction is 3 bytes long.</li>
+</ul>
+
+<p>
+Why does the Bochs start like this? This is how Intel designed
+the 8088 processor, which IBM used in their original PC.
+The PC hardware is set up so that the address range
+0xf0000 - 0xfffff contains the BIOS (Basic Input/Output System),
+which early PCs held in ROM
+but current PCs store in updateable flash memory.
+The Bochs simulator comes with its own "virtual" BIOS,
+which it maps at this location in the processor's physical memory.
+On reset, the processor sets CS to 0xf000 and the IP to 0xfff0, and
+consequently, execution begins at that (CS:IP) segment address. But
+what memory location does this CS:IP correspond to?
+</p>
+
+<p>To answer that we need to know a bit about real mode addressing.
+In real mode (the mode that PC starts off in) address translation
+works according to the formula: <tt>ADDRESS = 16 * SELECTOR +
+OFFSET</tt>. So, when the IBM PC sets CS to 0xf000 and IP to
+0xfff0, the memory address referenced is:</p>
+
+<pre>
+   16 * 0xf000 + 0xfff0   # in hex multiplication by 16 is
+   = 0xf0000 + 0xfff0     # easy--just append a 0.
+   = 0xffff0 
+</pre>
+<p>
+Now we can see that the PC starts executing 16 bytes from the end
+of the BIOS code. Therefore we shouldn't be surprised that the
+first thing that the BIOS does is <tt>jmp</tt> backwards; after all
+how much could it accomplish in just 16 bytes? When the BIOS runs,
+it sets up an interrupt descriptor table, initializes devices and
+searches for a bootable device (e.g., a floppy, hard drive, CDROM).
+When it finds a bootable devices, the BIOS loads the first sector
+(512 bytes) into memory at address <tt>0x7c00 - 0x7d00</tt> and
+sets CS:IP to <tt>0000:7c00</tt>. Like the BIOS load address,
+these addresses are fairly arbitrary--but they are fixed.
+</p>
+
+<p><i>Side note</i>: disks are by historical convention
+divided up in to 512 byte regions called
+sectors.  This is the disk's minimum transfer granularity.  Each
+read/write operation must be one or more sectors in size.  If the disk
+is bootable, the first sector is also called the boot sector, since
+this is where the boot strapping code resides.</p>
+
+<p>Set a break point at 0x7c00 and let the machine run until
+it hits the break point.  Step through the code for five or ten instructions
+until you figure out what's going on.
+
+<p>Make sure you can answer these questions:</p>
+
+<ol>
+<li>Disassemble <tt>0x7c00</tt>.  Does it match the source file <tt>ex1.S</tt>?
+<li>Does the code match what you saw while single-stepping?
+<li>What is the machine code for a NOP?</li>
+<li>What is the machine code that corresponds to the <tt>jmp
+start</tt> above?  Write out the bytes in hex.  Refer to the <a
+href="../readings/intelv2.pdf">x86 instruction set manual</a>. Explain
+each of the bytes.</li>
+<li>You should have concluded that the last byte is a relative
+offset. What is its value in hex and in decimal? Refer to section
+2.1 of the PC assembly book to learn how to convert the hex value,
+which is in 2s-complement representation, to a decimal value.</li>
+<li>Is the relative offset of the <tt>jmp</tt> instruction
+relative to the instruction counter at the beginning or the end of the
+<tt>jmp</tt>? How do you know this?</li>
+</ol>
+
+<p>
+<b>Link vs. Load Address</b>
+<p>
+The <i>load address</i> is the address at which a binary is loaded
+into memory. For example, the BIOS is loaded by the PC hardware at
+address 0xf0000. So this is the BIOS's load address.
+
+<p>Similarly, the BIOS loads the boot sector at address 0x7c00. So
+this is the boot sector's load address.</p>
+
+<p>The <i>link address</i> is the address for which a binary is
+linked. Essentially, linking a binary for a given link address,
+prepares it to be loaded at that address. 
+A program's link address in practice becomes
+subtly encoded within the binary in a multitude of ways, with the result
+that if a binary is not loaded at the address that it is linked for,
+things will not work.</p>
+
+<p>In one sentence: the link address is the location where a binary
+assumes it is going to be loaded.</p>
+
+<p>When our <tt>Makefile</tt> builds a disk image, it links
+the boot loader with a link address of <tt>0x7c00</tt>,
+matching the address where the BIOS will load it at
+run-time.</p>
+
+<p>The file <tt>ex2.S</tt> illustrates the vague <i>"link address becomes
+subtly encoded in the binary"</i> claim above. The load versus link
+issue should be clear after working through the concrete example in
+<tt>ex2.S</tt>.  Run <tt>gmake ex2.disk</tt> and restart <tt>bochs</tt>.
+
+<p>Make sure you can answer the following questions:</p>
+
+<ol>
+<li>Trace the execution with Bochs' debugger. After EAX is loaded with with
+$here, type 'info registers'. (You can also type 'dump_cpu' for a
+slightly more detailed view of the CPU's state.) What is the value of
+the EAX register?</li>
+
+<li>Explain what 'jmp *%eax' does. What is the CS:IP before and
+after this instruction?</li>
+
+<li>Explain why this code would not run correctly if the BIOS did
+not load it at address 0x7c00.</li>
+
+<li>Explain why the code in <tt>ex1.S</tt> would still run correctly even if
+the BIOS did <emph>NOT</emph> load it at address 0x7c00.</li>
+
+<li>Play with the <tt>BOOTADDR</tt> parameter in the
+<tt>Makefile</tt>. Explain how this value affects the value of EAX loaded
+by "movl $here,%eax".</li>
+(Note that due to <tt>ld</tt> trying to align the code,
+you should only use multiples of 8 (i.e., hex numbers ending in 0 or 8)
+as your <tt>BOOTADDR</tt>.  As a challenge, track down the behavior
+that occurs when <tt>BOOTADDR</tt> is not a multiple of 8.)
+</ol>
+
+When object code contains no absolute addresses that
+``subtly encode'' the link address, we say that it is position-independent:
+it will behave the same no matter where it is loaded.
+
+Don't forget to reset <tt>BOOTADDR</tt> to
+<tt>0x7c00</tt> and rerun <tt>gmake ex2.disk</tt>.
+
+<p>
+<b>Bochs Disk Images</b>
+<p>
+
+Now it's time to examine the steps to build a bochs disk image
+closely. It is important to understand what is going on and why each
+step is important. For this exercise we'll be using the code
+<tt>ex2.S</tt> again (ie. you don't need to run gmake).
+</p>
+
+<p>First, a handy tool for you to use is <tt>xxd</tt>.  It dumps a
+binary file as hex:</p>
+
+<pre>
+athena% xxd -g 1 -a disk 
+0000000: 90 90 90 90 66 b8 00 7c 00 00 66 ff e0 8d 74 00  ....f..|..f...t.
+0000010: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+*
+0176ff0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+</pre>
+
+<p>
+The '*' means that every thing in <tt>0000010-0176ff0</tt> is
+identical.
+</p>
+
+<p>
+Combine this with the source file <tt>ex2.S</tt> and perhaps single stepping
+through Bochs to answer the following questions: 
+</p>
+
+<ol>
+<li>Finish filling in this chart. It shows how the source code in
+<tt>ex2.S</tt> corresponds to the bytes in the
+<tt>disk.img</tt> file. The first to lines have been filled in for
+you.
+
+<pre>
+instruction             machine code        byte start         length
+ nop                         90                 0               1
+ nop                         90                 1               1
+ nop                          ?                 ?               ?
+ nop                          ?                 ?               ?
+ movl   $here,%eax            ?                 ?               ?
+ jmp    *%eax                 ?                 ?               ?
+</pre>
+</li>
+
+<li>Play with the <tt>BOOTADDR</tt> in the <tt>GNUmakefile</tt> to see
+how the disk image changes.
+If the BIOS loaded the disk image at a different address, could
+that ever affect the contents of the disk image?
+Why or why not? Now
+do you see why the link address should match the load address?</li>
+
+<li> Now you should learn how a disk image is built by studying the
+output of gmake.  Run <tt>gmake ex2.disk</tt>.  
+Make sure you understand each step in the build process.
+</ol>
+
+Don't forget to reset <tt>BOOTADDR</tt> to its original
+value.
+
+<p>
+<b>Initializing the Stack</b>
+<p>
+
+Read and understand the code in <tt>ex3.S</tt>--it gives an example of how
+to setup the stack.  Type <tt>gmake ex3.disk</tt>.
+
+<p>To answer this question, you might like to use the 'x' command
+in the Bochs debugger. In the example below, we print out 10 words
+starting at address 0x7c00. And then we print out 16 bytes starting
+at 0x7c00.</p>
+
+<p><i>Warning</i>: The size of a word is not a universal standard. To
+Bochs, a word is four bytes. In GNU assembly, a word is two
+bytes (the 'w' in xorw, which stands for word, means 2 bytes).</p>
+
+<pre>
+&lt;bochs:19&gt; x /10w 0x7c00
+[bochs]:
+0x7c00 &lt;bogus+0&gt;:       0x8e66c031      0x00bc66d0      0x6600007c      0x000003e8
+0x7c10 &lt;bogus+16&gt;:      0xfdeb6600      0x9090c366      0x00000000      0x00000000
+0x7c20 &lt;bogus+32&gt;:      0x00000000      0x00000000
+&lt;bochs:20&gt; x /16b 0x7c00
+[bochs]:
+0x7c00 &lt;bogus+0&gt;:       0x31    0xc0    0x66    0x8e    0xd0    0x66    0xbc    0x00
+0x7c08 &lt;bogus+8&gt;:       0x7c    0x00    0x00    0x66    0xe8    0x03    0x00    0x00
+&lt;bochs:21&gt;
+</pre>
+<p>
+Make sure you can answer these questions: 
+
+<ol>
+<li>List the contents (after the BIOS executes) of 40 bytes of
+memory starting address 0x7c00. What do these bytes
+correspond to?</li>
+
+<li>The "call subroutine" instruction pushes its return address on the
+stack. What is the value of SS:SP and the corresponding memory
+location right before and right after the "call"?</li>
+
+<li>What value gets pushed on the stack? How
+is this value related to the load address? to the link
+address?</li>
+
+<li>What does the "ret" instruction do? What is the value of SS:SP and
+the corresponding memory location right before and right after the
+"ret"?</li>
+
+<li>Where in memory is the stack located versus the boot sector's
+code? Do they overlap, abut, or are they spaced apart in
+memory?</li>
+
+<li>How about versus the BIOS's memory location?</li>
+
+<li>What would happen differently if <tt>ex3</tt> were loaded
+at a different place in memory?
+</ol>
+
+<p>
+<b>The boot loader</b>
+<p>
+
+Finally we've made it to the boot loader!
+
+<p>The files <tt>boot.S</tt> and <tt>bootc.c</tt>
+contain a working boot loader.
+Your job is to first read and understand the code.
+</p>
+
+<p>To make sense out of it you'll need to know what an a.out binary
+is. "a.out" is the traditional format of an executable program
+in Unix and Unix-like systems
+that is compiled and ready to run.
+The precise details of this format vary
+from one processor architecture and operating system to another,
+and in more recent versions of Linux and similar systems
+the a.out format has been largely replaced
+with ELF (Executable and Linkable Format),
+a substantially more powerful but also more complex executable program format.
+We're sticking to a.out format in this class for simplicity,
+since the GNU compiler toolchain still supports it.
+</p>
+
+<p>
+An a.out binary starts with a header, followed by 2
+sections: text and data. The text holds the program's machine
+code. The data section holds the programs (initialized) data.
+These section names obviously reflect the processor's viewpoint:
+anything that humans would consider "text",
+such as ASCII strings generated by the C compiler
+from string literals in the source code,
+will be found in the data section.
+</p>
+
+<pre>
+file offset:
+
+             0:  +-----------+
+                 |  header   | (length 32 bytes)
+            32:  +-----------+
+                 |           |
+                 |   text    | (length hdr.a_text)
+                 |           |
+32 + hdr.a_txt:  +-----------+
+                 |           |
+                 |   data    | (length hdr.a_data)
+                 |           |
+                 +-----------+
+
+              a.out binary format
+</pre>
+
+<pre>
+struct a_out_header {
+     unsigned long  a_midmag;   /* flags&lt;&lt;26 | mid&lt;&lt;16 | magic */
+     unsigned long  a_text;     /* text segment size */
+     unsigned long  a_data;     /* initialized data size */
+     unsigned long  a_bss;      /* uninitialized data size */
+     unsigned long  a_syms;     /* symbol table size */
+     unsigned long  a_entry;    /* entry point */
+     unsigned long  a_trsize;   /* text relocation size */
+     unsigned long  a_drsize;   /* data relocation size */
+}
+</pre>
+
+Of these fields, the bootloader only uses <tt>a_text</tt>,
+<tt>a_data</tt>, and <tt>a_entry</tt>. The meaning of the
+first two should be clear from the diagrams above.
+<tt>a_entry</tt> is the link address of the binary.
+
+<p>
+<b>Using segmentation to work around position dependence</b>
+<p>
+
+We've seen that in order to run position-dependent code,
+it must be loaded at its link address.
+<tt>Gcc</tt> uses position-dependent code to acess global variables
+or pass around function pointers.
+Thus, writing in C more-or-less implies having position-dependent code.
+Operating system kernels often link themselves at high virtual
+addresses (like 0xf0100020) so that user programs can use
+the lower part of the virtual address space.
+The reason for this arrangement will become clearer in the next lab.
+In order to run such a kernel, we need to load the kernel at that high address.
+Most machines don't even have that much memory (how much would it be?),
+so we'll use the segmentation hardware to make the kernel <i>appear</i>
+to be loaded there.
+<p>
+Run <tt>gmake k0.disk</tt> and then boot the disk in Bochs.
+The kernel that is booted has been carefully crafted to be 
+position-independent even though it is written in C.
+It checks whether its load and link address match and prints a message
+accordingly. 
+The kernel in <tt>k0.disk</tt> loads properly at 0x00100020.
+<p>
+On the other hand, if the boot loader were buggy, the kernel
+might behave like the one in <tt>k1.disk</tt>.
+Run <tt>gmake k1.disk</tt> and restart Bochs.
+(<tt>K1.disk</tt> simulates a buggy boot loader by writing
+the wrong load address into the a.out header.)
+<p>
+The kernel in <tt>k2.disk</tt> expects to be loaded at 0xf0100020
+but is loaded at 0x00100020, because the
+boot loader only uses the bottom 24 bits of the entry point
+as the load address.
+In this case, the kernel gets confused and prints garbage.
+Run <tt>gmake k2.disk</tt> and restart Bochs to see this.
+This means the kernel has loaded incorrectly.
+<p>
+(Challenge!  Fix the kernel to work in all situations.)
+<p>
+We can fake the top 8 bits of the entry point using the
+segmentation hardware.
+That is, we want to set up the kernel code segment so that
+the kernel entry point in that segment corresponds to the
+actual physical location where we're already loading the kernel.
+Eventually the kernel will set up page tables to accomplish the same thing,
+but using the segmentation hardware will do for now.
+<p>
+You task is to configure the
+segmentation hardware to provide the illusion that the kernel was
+loaded at its link address.
+Edit <tt>bootc.c</tt> to set up the segment descriptor
+<tt>kdesc</tt> properly to construct the illusion.
+You might want to consult section 3.4 of <a href="../readings/intelv3.pdf">
+IA-32 Intel Architecture Software Developer's Manual, Volume 3: System
+programming guide</a>.  The solution does not require using any
+esoteric features, just basic segmentation, though in a non-obvious
+way.
+</p>
+<p>
+Once you have <tt>bootc.c</tt> set up properly, you should be
+able to <tt>gmake k2.disk</tt> and then boot Bochs and get a
+successful result from the kernel.
+<p>
+Once you think <tt>bootc.c</tt> is correct, run <tt>gmake grade</tt>
+to run the tests that we will use to grade it.
+<p>
+Sadly, it is easy to make Bochs fall over while doing this exercise.
+If Bochs crashes, you might try again with "trace-on" so that
+at least you can figure out which instruction it was trying
+to simulate when it crashed.
+If Bochs falls over, it means your code is buggy - a real PC would
+have rebooted.
+<p>
+<i>Challenge!</i>  Read and understand <tt>kernel.c</tt>.
+
+
+<h2>Part 2: GCC Calling Conventions</h2>
+<p>
+In the second part of this lab
+we'll implement the standard C library routines <tt>setjmp</tt> and <tt>longjmp</tt>, declared thus:
+<p>
+<center>
+<table width=80%><tr><td>
+<pre>
+int  setjmp(jmp_buf env);
+void longjmp(jmp_buf env, int);
+</pre>
+<p>
+<tt>Setjmp</tt> saves its stack environment in env for later use by
+<tt>longjmp</tt>. It returns 0.
+<p>
+<tt>Longjmp</tt> restores the environment saved by the last call of
+<tt>setjmp</tt>. It then causes execution to continue as if the call
+of <tt>setjmp</tt> had just returned with value val. The invoker of
+<tt>setjmp</tt> must not itself have returned in the interim.  All
+accessible data have values as of the time <tt>longjmp</tt> was
+called.
+<p>
+</table></center>
+<p>
+One use for <tt>setjmp/longjmp</tt> is
+as a "poor man's" exception handling mechanism,
+since C does not have "try/catch" exceptions like C++ and Java do.
+These functions can also be used in more sophisticated ways, however,
+such as to switch between several entirely different execution stacks
+on the fly;
+user-level multithreading packages such as "pthreads" frequently do this.
+<p>
+Since the calling convention is the same in our a.out gcc as it is in the
+standard Linux x86 ELF gcc, we'll use the Linux gcc to make debugging easier.
+(Debugging is always easier when it's done outside the kernel.)
+<p>
+To understand how these routines behave, run <a href="setjmp-example.c">this program</a>.
+Make sure you understand why you see each line of output.
+Just as important, make sure you understand why you do <i>not</i>
+see so many of the ``<tt>exiting</tt>'' messages in the output.
+<p>
+To avoid conflicting with the C library definitions, our routines
+will be called
+<tt>setjmp828</tt> and <tt>longjmp828</tt> and declared thus:
+<pre>
+typedef struct stackenv stackenv_t;
+struct stackenv
+{
+	uint32_t ebp;
+	uint32_t ebx;
+	uint32_t esi;
+	uint32_t edi;
+	uint32_t esp;
+	uint32_t ret;
+};
+int  setjmp828(stackenv_t *env);
+void longjmp828(stackenv_t env, int);
+</pre>
+(Our declarations also make it explicit that <tt>env</tt> is a pointer
+to a structure.  The C library declarations leave this implicit by 
+typedefing <tt>jmp_buf</tt> to be an array of integers.)
+<p>
+Since they deal with low-level register manipulations,
+<tt>setlabel</tt> and <tt>gotolabel</tt> must be implemented
+in assembly.
+Your job is to implement <tt>setjmp828</tt> and <tt>longjmp828</tt> in <tt>lab1/jmp/jmp.S</tt>.
+An outline has been written for you.
+<p>
+You can test your implementation by running <tt>gmake grade</tt>.
+Note that if the grading program seg faults, it's probably your bug.
+<p>
+Make sure you can answer the following questions:
+<ol>
+<li>Why doesn't <tt>setjmp</tt> need to save EAX, ECX, or EDX?
+<li>Why does the <tt>setjmp</tt> definition include the requirement
+``The invoker of <tt>setjmp</tt> must not itself have returned in the interim.''?
+(In other words, what's wrong with <a href="setjmp-bad.c">this code</a>?
+Note that even though the code appears to work, it's still wrong.)
+<p>
+<b>Challenge!</b> Read and understand <tt>testjmp.S</tt>
+and <tt>testjmpc.c</tt>.
+
+<p>
+<b>This completes the lab.</b>
+
+<hr>
+<i>Version: $Revision: 1.12 $. Last modified: $Date: 2003/09/13 20:37:54 $</i>
+
+
+</ol>

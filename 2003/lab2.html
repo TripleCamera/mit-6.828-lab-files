@@ -1,0 +1,461 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<html>
+<head>
+<title>Lab 2: Memory Management</title>
+</head>
+<body>
+
+
+<h2>6.828 Fall 2003 Lab 2</h2>
+
+<h1>1. Introduction</h1>
+
+<p>
+<b>Handed out Wednesday, September 17, 2003<br>
+Due Thursday, October 2, 2003</b>
+
+<p>
+In this lab, your will write the memory management code for your
+operating system. Memory management is comprised of two components.
+</p>
+
+<p>
+The first component that comes under the umbrella of memory management
+is virtual memory.  You will set up the virtual memory layout for your
+operating system according to the specification we provide.  Your task
+will be to build the page table data structure to match our
+specification.
+</p>
+
+<p>
+The second component is managing the physical memory of the computer.
+The x86 divides physical memory up into 4096 byte regions called
+pages.  Your task will be to maintain data structures that record
+which pages are free and allocated and how many processes are sharing
+each allocated page.  You will also write the routines to allocate and
+free pages of memory.
+</p>
+
+<h1>2. Getting started</h1>
+
+<p>
+You should now download the code for the lab from
+<a href="http://pdos.lcs.mit.edu/6.828/labs/lab2.tar.gz">
+http://pdos.lcs.mit.edu/6.828/labs/lab2.tar.gz</a>
+and untar it into your 6.828 directory. 
+For example,</p>
+<pre>
+athena% <b>cd ~/6.828</b>
+athena% <b>wget http://pdos.lcs.mit.edu/6.828/labs/lab2.tar.gz</b>
+athena% <b>gtar xvzf lab2.tar.gz</b>
+athena% <b>cd lab2</b>
+</pre>
+
+Now take a look through the source tree:
+
+<pre>
+athena% <b>ls -l</b>
+-rw-r--r--  1 baford  wheel  1832 Sep 11 17:39 GNUmakefile
+drwxr-xr-x  2 baford  wheel   512 Sep 11 17:39 bios
+drwxr-xr-x  2 baford  wheel   512 Sep 11 17:39 boot
+drwxr-xr-x  2 baford  wheel   512 Sep 11 17:39 inc
+drwxr-xr-x  2 baford  wheel   512 Sep 11 17:39 kern
+-rw-r--r--  1 baford  wheel  2331 Sep 11 17:39 mergedep.pl
+
+athena% <b>ls *</b>
+GNUmakefile     mergedep.pl
+ 
+bios:
+BIOS-bochs-latest       VGABIOS-elpin-2.40
+ 
+boot:
+Makefrag        boot.S          main.c
+ 
+inc:
+asm.h           isareg.h        pmap.h          timerreg.h      x86.h
+env.h           kbdreg.h        queue.h         trap.h
+error.h         mmu.h           stdarg.h        types.h
+ 
+kern:
+Makefrag        env.c           kclock.c        picirq.h        printf.c
+console.c       env.h           kclock.h        pmap.c          printf.h
+console.h       init.c          locore.S        pmap.h
+</pre>
+
+<p>
+The <tt>bios</tt> subdirectory contains the ROM BIOS for Bochs to use,
+and the <tt>boot</tt> subdirectory contains essentially the same boot loader
+that you explored in Lab 1.
+You should not need to do anything with either of these directories
+in this lab.
+
+<p>
+The <tt>inc</tt> and <tt>kern</tt> directories are new, however,
+and contain a skeleton for a (just) slightly more "real" kernel
+than the trivial one you played with in Lab 1.
+The <tt>kern</tt> directory contains the kernel's source code
+along with header files that will be private to the kernel itself.
+The <tt>inc</tt> directory contains C header files
+that will be used both by the kernel and by other parts of the system,
+such as global type definitions (<tt>inc/types.h</tt>)
+and definitions relating to the kernel's API (e.g., <tt>inc/error.h</tt>).
+Since there <i>are</i> no "other" parts of the system just yet
+(if we don't count the boot loader),
+for now you will focus primarily on the <tt>kern</tt> directory.
+
+Now build the kernel:
+
+<pre>
+athena% <b>gmake</b>
+      .
+   [ gmake output goes here ] 
+      .
+      .
+
+# this is the disk image
+athena% <b>ls -l kern/bochs.img</b>
+-rw-r--r--  1 cates  wheel  5120000 Sep 15 19:48 kern/bochs.img
+
+# there is a bochsrc file in this directory (which boots this image)
+athena% <b>grep diskc .bochsrc</b>
+diskc: file="./kern/bochs.img", cyl=200, heads=16, spt=63
+
+# so let's see what this OS does!
+athena% <b>bochs-nogui</b>
+</pre>
+After you continue (<b>c</b>), 
+your OS should print a few lines of text the last of which read:
+<pre>
+panic: i386_vm_init: This function is not finished                              
+</pre>
+
+Do not continue unless you see this.
+
+At this point you should examine the output of <code>gmake</code> to
+make sure you understand what is happening.  You should also read the
+source files in the subdirectories <code>kern</code> and
+<code>inc</code>.
+
+<p>
+
+You should review the Bochs user manual at
+<a href="http://bochs.sourceforge.net/doc/docbook/user/x2095.html"
+>http://bochs.sourceforge.net/doc/docbook/user/x2095.html</a>.
+<p>
+In particular, note the various <code>vb</code>, <code>lb</code>,
+and <code>pb</code> breakpoint commands to break at
+virtual, linear, and physical breakpoints.
+The default <code>b</code> command breaks at a <i>physical</i> address.
+<p>
+Also note that the <code>x</code> command examines data at a <i>linear</i> address.
+The command <code>xp</code> takes a physical address.  
+Sadly there is no <code>xv</code>.
+
+<h1>3. Hand-In Procedure</h1>
+
+<p>
+When you are ready to hand in your lab,
+run <tt>gmake handin</tt> in the <tt>lab2</tt> directory.
+This will first do a <tt>make clean</tt>
+to clean out any <tt>.o</tt> files and executables,
+and then <tt>tar</tt> up and submit the entire contents
+of your <tt>lab2</tt> directory.
+
+<p>
+As before, we will be grading your solutions with a grading program.
+You can run <tt>gmake grade</tt> in the <tt>lab2</tt> directory
+to test your kernel with the grading program.
+You may change any of the kernel source and header files you need to
+in order to complete the lab,
+but needless to say you must not change
+or otherwise try to subvert the grading code.
+
+<p>
+In future labs you will progressively build on this same kernel.
+With each new lab we will hand out a source tree
+containing additional files and possibly some changes to existing files.
+You will need to compare the new source tree
+against the one we provided for the previous lab
+in order to figure out what new code you need to incorporate into your kernel,
+and what code you don't need because you wrote it yourself in the previous lab.
+You may find it useful to keep a "pristine" copy
+of our source tree for each lab around
+along with your modified versions.
+You should expect to become intimately familiar
+with the Unix <tt>diff</tt> utility if you aren't already,
+and <tt>patch</tt> can be highly useful as well.
+If you're particularly organized you might try using <tt>cvs</tt>
+and learn how to deal with branches.
+"Diff-and-merge" is an important and unavoidable component
+of all real OS development activity,
+so any time you spend learning to do this effectively
+is time well spent.
+
+<h1>4. Background</h1>
+
+<!--
+<p><i> Aside: Contrast this to the VM layout for version 7 Unix on the
+PDP/11-40.  You will recall from lecture, that in v7, the kernel and
+each user process each have their own address spaces.
+</i>
+-->
+
+<p>
+The VM layout you are going to set up divides the address space into
+two parts.  The user process has complete control over the lower part,
+while the kernel maintains control over the upper part.  The dividing
+line is defined somewhat arbitrarily by <code>ULIM</code> in
+<code>inc/mmu.h</code> (roughly, 256MB from the top of the
+virtual address space).
+
+<p>Since the kernel and user process co-exist in each address space,
+we will have to use permission bits to prevent the user from accessing
+the kernel's memory (i.e. to enforce fault isolation).  We do this as
+follows.
+
+<p>The user process will have no permission to any of the
+memory above <code>ULIM</code>, while the kernel will be able to
+read/write this memory.  For the address range
+<code>(UTOP,ULIM]</code>, both the kernel and the user process have
+the same permission: they can read but not write this address range.
+This range of address is used to expose certain kernel data structures
+read-only to the user process.  Lastly, the address space below
+<code>UTOP</code> is for the user process to use; the user process
+will set permissions for accessing this memory.
+</p>
+
+<p>
+In this lab, you are going to set up the address space above
+<code>UTOP</code>--the kernel part of the address space.
+
+<p>
+You might want to consult chapter 3 of <a
+href="../readings/intelv3.pdf">IA-32 Intel Architecture Software
+Developer's Manual, Volume 3: System programming guide</a> for
+reference.
+
+<h1>5. Exercises</h1>
+
+<h2>Exercise 1: VM layout (of the kernel part of the VA space)</h2>
+
+<p>
+The layout of the kernel portion of the virtual address space will be
+handled by the <code>i386_vm_init()</code> function, defined in
+<code>kern/pmap.c</code>. The actual layout is as described
+is diagrammed in <code>inc/mmu.h</code>.  It would behoove you to
+become familiar with this file as it also contains useful macros and
+definitions.
+
+<p>
+In the file <code>kern/pmap.c</code> you must implement the functions:
+<pre>
+alloc()
+boot_pgdir_walk()
+boot_map_segment()
+i386_vm_init()
+</pre>
+The comments in <code>i386_vm_init()</code> specify the virtual memory
+layout.  Your task is to fill in the missing code to build a 2-level
+page table fulfilling this specification.
+The other functions are helper routines you will find useful.
+</p>
+
+<p>Once you have done this, run the code.  The function call to
+<code>check_boot_pgdir()</code> (it's located about half way
+down the <code>i386_vm_init()</code>) will check over the page table
+you have built and report any problems.  Do not continue until you
+pass this check. You may find it helpful to add your own
+<code>assert()</code>s to verify that your own assumptions are, in
+fact, correct.
+
+<p>
+Make sure you can answer these questions:
+<ol>
+<li> What entries (rows) in the page directory have been filled in
+     at this point? What addresses do they map and where do they
+     point? In other words, fill out this table as much as possible:
+     <table border=1>
+     <tr><td align="center">Entry</td>
+         <td align="center">Base Virtual Address</td>
+         <td align="center">Points to (logically):</td></tr>
+     <tr><td>1023</td><td>?</td><td>Page table for top 4MB of phys
+         memory</td></tr>
+     <tr><td>1022</td><td>?</td><td>?</td></tr>
+     <tr><td align="center">.</td><td>?</td><td>?</td></tr>
+     <tr><td align="center">.</td><td>?</td><td>?</td></tr>
+     <tr><td align="center">.</td><td>?</td><td>?</td></tr>
+     <tr><td>2</td><td>0x00800000</td><td>?</td></tr>
+     <tr><td>1</td><td>0x00400000</td><td>?</td></tr>
+     <tr><td>0</td><td>0x00000000</td><td>[see next question?]</td></tr>
+     </table></li>
+     
+<li> In <code>i386_vm_init()</code>, after
+     <code>check_boot_page_directory</code>, we map the first entry of
+     the page directory to the page table of the first four MB of
+     RAM, but delete this mapping at the end of the function.  Why is
+     this necessary? What would happen if it were omitted? Does this
+     actually limit our kernel to be 4MB? What must be true if our
+     kernel were larger than 4MB?</li>
+
+<li> (From Lecture 5) On the x86, we place the kernel and user process
+in the same address space.  What specific mechanism (i.e., what
+register, memory address, or bit thereof) is used to protect the
+kernel's memory against a malicious user process?
+
+<p> Is there a comparable mechanism on the PDP-11/40 which would
+provide the fault isolation necessary to allow the kernel and the user
+process to run in the same address space?  (read: "same address space"
+as "with the same set of PARs/PDRs")
+
+<!--
+<li> What constraint does the placement of the kernel in the virtual
+     address space place on the link address of user space programs?
+     In particular, think about how kernel growth or different amounts
+     of physical memory might affect available virtual address space.
+-->
+</ol>
+
+<b>Challenge!</b>
+We wasted a lot of page tables to allocate the KERNBASE mapping.
+Do a better job using the PTE_PS bit in page directory entries.
+(See <a href="../readings/intelv3.pdf">volume 3 of the Intel manuals</a>.)  
+Make sure you only use this on processors that support it!
+<p>
+
+<h2>Exercise 2: Physical page management</h2>
+
+<p>
+In the file <code>kern/pmap.c</code> you must implement code for
+the five functions listed below:
+<pre>
+page_init()
+page_alloc()
+page_free()
+pgdir_walk()
+page_insert()
+page_remove()
+</pre>
+<p>
+The function <code>page_check()</code>, called from <code>i386_init()</code>,
+tests these functions.
+You must get <code>page_check()</code> to run successfully.
+
+<p>
+You may find reading <tt>inc/pmap.h</tt> and <tt>kern/pmap.h</tt> useful.
+
+<p>
+Be able to answer the following questions:
+<ol>
+<li> What is the maximum amount of physical memory that this operating
+     system can support? Why?</li>
+<li> How much space overhead is there for managing memory, if we actually
+     had the maximum amount of physical memory?
+     How is overhead this broken down?</li>
+</ol>
+
+<h2>Exercise 3: Printf Potpourri</h2>
+
+Most people take functions like <tt>printf</tt> for granted,
+sometimes even thinking of them as "primitives" of the C language.
+But in an OS kernel,
+all I/O of <i>any</i> kind that we do,
+we have to implement ourselves!
+
+<p>
+Read through <tt>kern/printf.c</tt> and <tt>kern/console.c</tt>,
+and make sure you understand their relationship.
+We have left a small fragment of code out of <tt>printf</tt> -
+the code necessary to print octal numbers
+using patterns of the form "%o".
+Fill in this code fragment.
+
+<p>
+Be able to answer the following questions:
+<ol>
+
+<li> Explain the interface between <code>printf.c</code> and
+<code>console.c</code>.  Specifically, what function does
+<code>console.c</code> export?  How is this function used by
+<code>printf.c</code>?
+
+<li> Explain the following from <code>console.c</code>:
+<pre>
+1  if (crt_pos >= CRT_SIZE) {
+2    int i;
+3    bcopy (crt_buf + CRT_COLS, crt_buf, CRT_SIZE << 1);
+4    for (i = CRT_SIZE - CRT_COLS; i < CRT_SIZE; i++)
+5      crt_buf[i] = 0x0700 | ' ';
+6    crt_pos -= CRT_COLS;
+7  }
+</pre>
+
+<li> For the following questions you might wish to consult lecture notes
+2.  Those notes cover GCC's calling convention on the x86.
+
+<p>
+Trace the execution of the following code step-by-step:
+<pre>
+int x = 1, y = 3, z = 4;
+warn("x %d, y %x, z %d\n", x, y, z);
+</pre>
+<ul>
+<li> First, in the call to <code>kprintf()</code>, to what does <code>fmt</code> point? to
+what does <code>ap</code> point?
+
+<li> Second, list (in-order of execution) each call to
+<code>cons_putc</code>, <code>va_arg</code>, and <code>ksprintn</code>.
+For <code>cons_putc</code>, list its argument as well.  For
+<code>va_arg</code>, list what <code>ap</code> points to before and
+after the call.  For <code>ksprintn</code> list the values of it's
+first two arguments.
+
+</ul>
+<li> Run the following code.
+<pre>
+    u_int i = 0x00646c72;
+    warn("H%x Wo%s", 57616, &i);
+</pre>
+
+What is the output?  Explain how this output is arrived out in the
+step-by-step manner of the previous exercise.
+
+<p>The output depends on that fact that the x86 is little-endian.  If
+the x86 were instead big-endian what would you set <code>i</code> to in
+order to yield the same output?  Would you need to change
+<code>57616</code> to a different value?
+
+<p>
+<a href=http://www.webopedia.com/TERM/b/big_endian.html>Here's
+a description of little- and big-endian</a>
+and
+<a href=http://www.networksorcery.com/enp/ien/ien137.txt>a more
+whimsical description</a>.
+
+<li>
+In the following code, what is going to be printed after
+<code>'y='</code>?  (note: the answer is not a specific value.)  Why
+does this happen?
+
+<pre>
+    warn("x=%d y=%d", 3);
+</pre>
+
+<li>
+Let's say that GCC changed its calling convention so that it
+passed arguments in declaration order (i.e., the opposite of reverse
+order).  How would you have to change <code>printf</code> or its
+interface so that it would still be possible to pass it a variable
+number of arguments?
+
+</ol>
+
+
+
+<p>
+<b>This completes the lab.</b>
+
+<hr>
+<i>Version: $Revision: 1.7 $. Last modified: $Date: 2003/09/17 19:04:52 $</i>
+
+</body>
+</html>

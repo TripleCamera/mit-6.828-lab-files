@@ -1,0 +1,759 @@
+<html>
+<head>
+<title>6.828 Fall 2003 Lab 0 Solutions</title>
+</head>
+<body>
+<h2>6.828 Fall 2003 Lab 0</h2>
+<h1>Simulators, Debuggers, and Disassemblers</h1>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 1.</b> The PDP-11 simulator provides
+a register SR to allow you to pretend to
+set the switches that would be on the front of a real
+PDP-11.  Run the command <tt>e sr</tt> (<tt>e</tt>
+stands for examine) to look at the current value of SR.
+What is it?
+Run <tt>d sr 1</tt> (<tt>d</tt> stands for deposit)
+to change the SR value.
+Boot again.  What's different?
+Poke around in <tt>~/6.828/v6/usr/sys</tt> to find
+where that came from.
+Why didn't you see it the first time you booted?
+(Hint: you ran the same kernel both times,
+so the answer is <i>not</i> that the switches caused
+a different kernel to be loaded.)
+</table></center>
+<p>
+SR starts at 0.
+When we boot with a non-zero SR, the message
+</tt>"6.828 kernel</tt> appears.
+It is printed using <tt>printf</tt> from <tt>main</tt>, which is in
+<tt>/usr/sys/ken/main.c</tt>.
+We didn't see it the first time because
+<tt>printf</tt> calls <tt>putchar</tt>,
+which consults the switches at <tt>SW->integ</tt>
+and does not print if they are zero.
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 2.</b> 
+Save a transcript of the following session.
+The UNIX kernel boot sequence starts
+at address 40 (octal).  Run the command <tt>d break 40</tt>
+to set a breakpoint (there's only one!) at address 40.
+Boot again.  When the kernel stops at address 40, what is
+the next instruction it will execute?
+Run the command <tt>s</tt> (for step) to execute that one instruction.
+Now what is the <tt>PC</tt> set to?
+Examine the next 20 bytes of instructions to run by executing <tt>e xxx-yyy</tt>
+where <tt>xxx</tt> is the current value of the <tt>PC</tt>,
+and <tt>yyy</tt> is <tt>xxx</tt> plus 20.
+By default <tt>e</tt> prints the octal words it is examining.
+You can examine instructions with the <tt>-m</tt> flag.
+Try <tt>e -m xxx-yyy</tt>.
+Does each instruction occupy the same number of bytes in memory?
+Run <tt>t 5</tt> to trace through those instructions.  (You could also
+run <tt>s</tt> 5 times.  <tt>s 5</tt> would step through the 5 instructions
+but not print the register states after each one.)
+Clear the breakpoint by setting it to an innocuous value like
+the top of memory: <tt>d break 177777</tt>.
+Then let the simulation continue: <tt>c</tt>.
+Hand in the transcript of your session, along with the answers
+to the three questions above.
+</table></center>
+<p>
+The simulator transcript looks like:
+<font size=-1><pre>
+sim> d break 40
+sim> b rk0
+@unix
+
+Breakpoint, PC=000040  (JMP 3316)
+R0=137000 R1=177404 R2=071000 R3=136064 R4=135030 R5=135770
+KSP=136776 USP=177756 PSW=000344 (CM=0,PM=0,IPL=7,tnZvc)
+
+</pre></font>
+We can see that the next instruction is "JMP 3316".
+<font size=-1><pre>
+sim> s
+
+Step expired, PC: PC=003316  (BIT #1,177572)
+R0=137000 R1=177404 R2=071000 R3=136064 R4=135030 R5=135770
+KSP=136776 USP=177756 PSW=000344 (CM=0,PM=0,IPL=7,tnZvc)
+</pre></font>
+The PC is now 3316.
+<font size=-1><pre>
+
+sim> e 3316-3336
+3316:	032767
+3320:	000001
+3322:	174246
+3324:	001374
+3326:	000005
+3330:	012700
+3332:	172340
+3334:	012701
+3336:	172300
+sim> e -m 3316-3336
+3316:	BIT #1,177572
+3324:	BNE 3316
+3326:	RESET
+3330:	MOV #172340,R0
+3334:	MOV #172300,R1
+</pre></font>
+Since there are 16 bytes of memory but 5 instructions,
+each instruction cannot be the same size.
+<font size=-1><pre>
+sim> t 5
+PC=003316  (BIT #1,177572)
+R0=137000 R1=177404 R2=071000 R3=136064 R4=135030 R5=135770
+KSP=136776 USP=177756 PSW=000344 (CM=0,PM=0,IPL=7,tnZvc)
+
+PC=003324  (BNE 3316)
+R0=137000 R1=177404 R2=071000 R3=136064 R4=135030 R5=135770
+KSP=136776 USP=177756 PSW=000344 (CM=0,PM=0,IPL=7,tnZvc)
+
+PC=003326  (RESET)
+R0=137000 R1=177404 R2=071000 R3=136064 R4=135030 R5=135770
+KSP=136776 USP=177756 PSW=000344 (CM=0,PM=0,IPL=7,tnZvc)
+
+PC=003330  (MOV #172340,R0)
+R0=137000 R1=177404 R2=071000 R3=136064 R4=135030 R5=135770
+KSP=136776 USP=177756 PSW=000344 (CM=0,PM=0,IPL=7,tnZvc)
+
+PC=003334  (MOV #172300,R1)
+R0=172340 R1=177404 R2=071000 R3=136064 R4=135030 R5=135770
+KSP=136776 USP=177756 PSW=000344 (CM=0,PM=0,IPL=7,tNzvc)
+
+
+Step expired, PC: PC=003340  (MOV #200,R4)
+R0=172340 R1=172300 R2=071000 R3=136064 R4=135030 R5=135770
+KSP=136776 USP=177756 PSW=000350 (CM=0,PM=0,IPL=7,tNzvc)
+
+sim> d break 177777
+sim> c
+
+login: 
+</pre></font>
+
+<p>
+<h2>Rebuilding the UNIX kernel</h2>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 3.</b> Boot your modified kernel. 
+Did it work as expected?  (If not, figure out why and repeat.)
+</table></center>
+<p>
+Yes.  Yes it did.
+
+
+<h2>UNIX C calling conventions</h2>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 4.</b>  What is the exit status (the XXX in the transcript)?
+</table></center>
+The exit status is 72 decimal.
+
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 5.</b>  What are the register values at the breakpoint?
+What does the stack look like for 10 (decimal 8!) words on either side of
+the stack pointer at the breakpoint?
+</table></center>
+<font size=-1><pre>
+Breakpoint, PC=003604  (JSR R5,3552)
+R0=003662 R1=172320 R2=001177 R3=000000 R4=000200 R5=141774
+KSP=141756 USP=000000 PSW=030000 (CM=0,PM=3,IPL=0,tnzvc)
+
+sim&gt; e -v 141736-141776
+141736:	000000
+141740:	000000
+141742:	000000
+141744:	000000
+141746:	000000
+141750:	000000
+141752:	000000
+141754:	000000
+141756:	003700
+141760:	000001
+141762:	000002
+141764:	003566
+141766:	001177
+141770:	000000
+141772:	000200
+141774:	135770
+141776:	003470
+sim&gt; 
+</pre></font>
+
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 6.</b>  Deduce the
+values held by each stack location near the stack pointer.
+Where is the return PC?  Where are the function arguments?
+What is stored in the addresses below the stack pointer when
+<tt>jsr r5,csv</tt> executes?  You should turn in a chart like
+the one on Lions page 10-3, but explain what every stack word is used for!
+</table></center>
+<p>
+
+<font size=-1><pre>
+sim&gt; e -v 141736-141776
+141736:	000000
+141740:	000000
+141742:	000000
+141744:	000000
+141746:	000000
+141750:	000000
+141752:	000000
+141754:	000000
+141756:	003700 -- return PC in main's call to f.
+141760:	000001 -- 1st function arg
+141762:	000002 -- 2nd function arg
+141764:	003566 -- address of cret
+141766:	001177 -- saved r4
+141770:	000000 -- saved r3
+141772:	000200 -- saved r2
+141774:	135770 -- saved r5 (left over value from boot loader)
+141776:	003470 -- return PC in assembly's call to main.
+sim&gt; 
+</pre></font>
+
+
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 7.</b>  Armed with your stack diagram, annotate
+your disassemblies of <tt>main</tt> and <tt>f</tt>, explaining
+the purpose of each line.
+</table></center>
+<p>
+
+<font size=-1><pre>
+athena$ <b>v6 db a.out</b>
+<b>_main=</b>
+104
+<b>_main,20?</b>
+  jsr r5,csv        <i>save r5, r2, r3, r4 values</i>
+  tst -(sp)         <i>standard prologue: alloc a temporary</i>
+  mov $2,(sp)       <i>push 2 into that temporary</i>
+  mov $1,-(sp)      <i>push 1</i>
+  jsr pc,*$_f       <i>call f(1,2)</i>
+  tst (sp)+         <i>pop 1 (2 needn't pop because it's in the temp)</i>
+  mov r0,-8(r5)     <i>save return value in temp (uses cret addr!)</i>
+  mov -8(r5),r0     <i>use temp as our return value</i>
+  br _main+36       <i>no-op function epilogue -- goes to next line</i>
+  jmp cret          <i>return</i>
+...
+<b>_f,20?</b>
+  jsr r5,csv        <i>same</i>
+  tst -(sp)
+  clr -8(r5)        <i>c = 0</i>
+  mov 4(r5),r0      <i>r0 = a (first arg)</i>
+  ash $3,r0         <i>r0 <<= 3 (r0 *= 010)</i>
+  add r0,-8(r5)     <i>c += r0</i>
+  mov 6(r5),r0      <i>r0 = b (second arg)</i>
+  ash $5,r0         <i>r0 <<= 5 (r0 *= 040)</i>
+  add r0,-8(r5)     <i>c += r0</i>
+  mov -8(r5),r0     <i>use c as our return value</i>
+  br _f+50          <i>same</i>
+  jmp cret
+...
+</pre></font>
+<p>
+It's worth noting that the code here is different
+from the code compiled into the kernel, because
+the kernel is compiled with optimizations.
+<p>
+<h2>Digression about V6 calling conventions</h2>
+<p>
+You might wonder why the address of <tt>cret</tt>
+ends up on the stack.  
+The <tt>csv</tt> function puts it there when
+returning after saving the registers.
+The instruction is <tt>jsr pc,(r0)</tt>.
+<p>
+(In what follows, you can find the files mentioned
+in <tt>/mit/6.828/sw</tt> on athena.)
+<p>
+The <tt>csv</tt> in the C library (<tt>v6/usr/source/s4/csv.s</tt>) does this explicitly:
+<font size=-1><pre>
+/ C register save and restore -- version 12/74
+
+.globl	csv
+.globl	cret
+
+csv:
+	mov	r5,r0
+	mov	sp,r5
+	mov	r4,-(sp)
+	mov	r3,-(sp)
+	mov	r2,-(sp)
+	tst	-(sp)
+	jmp	(r0)
+
+cret:
+	mov	r5,r1
+	mov	-(r1),r4
+	mov	-(r1),r3
+	mov	-(r1),r2
+	mov	r5,sp
+	mov	(sp)+,r5
+	rts	pc
+</pre></font>
+
+but the one we have in the kernel
+(in <tt>v6/usr/sys/conf/m40.s</tt>)
+has the shorter <tt>jsr pc, (r0)</tt>.
+This is just a way to squeeze an instruction
+out of <tt>csv</tt>.  The actual value pushed
+is irrelevant; the code just wants to make some space.
+Remember that this function is executed as part
+of every C function call, so saving one instruction
+might well be a significant speedup!
+<p>
+The V7 C library's <tt>v7/src/libc/crt/csv.s</tt>
+adopted the kernel approach, along with an explanatory comment:
+<font size=-1><pre>
+/ C register save and restore -- version 7/75
+
+.globl	csv
+.globl	cret
+
+csv:
+	mov	r5,r0
+	mov	sp,r5
+	mov	r4,-(sp)
+	mov	r3,-(sp)
+	mov	r2,-(sp)
+	jsr	pc,(r0)		/ jsr part is sub $2,sp
+
+cret:
+	mov	r5,r2
+	mov	-(r2),r4
+	mov	-(r2),r3
+	mov	-(r2),r2
+	mov	r5,sp
+	mov	(sp)+,r5
+	rts	pc
+</pre></font>
+<p>
+Another interesting question is why the
+<tt>tst -(sp)</tt> after <tt>jsr r5, csv</tt>
+in the function prologue.
+This was just a convenient way to subtract
+two from the stack pointer.  
+In fact, it's shorter, since a <tt>sub $2, sp</tt>
+would use an extra word of instruction for the
+immediate <tt>$2</tt>.
+<p>
+The V6 C compiler special cased this
+(<tt>v6/usr/source/c/c11.c</tt>):
+<font size=-1><pre>
+	case SAVE:
+		printf("jsr	r5,csv\n");
+		t = getw(ascbuf)-6;
+		if (t==2)
+			printf("tst	-(sp)\n");
+		else if (t > 2)
+			printf("sub	$%o,sp\n", t);
+		break;
+</pre></font>
+<p>
+Of course, this doesn't answer the question
+of why our <tt>f</tt> function allocates
+space that it never uses, nor does it answer
+the question of what <tt>-6</tt> is in the 
+compiler fragment above.
+<p>
+To answer that, we need to dig deeper into
+how the compiler works.
+The argument to the pseudo-op SAVE is the value
+<tt>autolen</tt> computed in <tt>blkhed</tt>
+in <tt>v6/usr/source/c/c02.c</tt>.
+That's the size of the stack frame, effectively.
+<tt>Blkhed</tt> initializes <tt>autolen</tt> to 6
+and then processes the code inside the block,
+which increases autolen as necessary to allocate
+automatic (stack) storage for local variables.
+Why does <tt>autolen</tt> start at 6?
+Because <tt>-autolen</tt> is used as the offset
+from <tt>r5</tt> used to allocate a variable.
+The code to allocate a new local variable does:
+<font size=-1><pre>
+	if (dsym->hclass==AUTO) {
+		autolen =+ rlength(dsym);
+		dsym->hoffset = -autolen;
+	} 
+</pre></font>
+So the first variable will be stored at <tt>-8(r5)</tt>
+as we saw above, with <tt>f</tt>'s <tt>c</tt> variable.
+What are the 4 values before that?  Consulting our stack
+diagram we see that they are the saved
+<tt>r5</tt>, <tt>r2</tt>, <tt>r3</tt>, and <tt>r4</tt>.
+<p>
+But wait!  What about the extra stack word being allocated
+in <tt>csv</tt>?
+That should mean we'd only need to allocate
+<tt>autolen-6-2</tt> words after <tt>csv</tt> runs.
+The answer is made clear by the disassembly of <tt>main</tt> above:
+<font size=-1><pre>
+  mov $2,(sp)       <i>push 2 into that temporary</i>
+  mov $1,-(sp)      <i>push 1</i>
+  jsr pc,*$_f       <i>call f(1,2)</i>
+  tst (sp)+         <i>pop 1 (2 needn't pop because it's in the temp)</i>
+</pre></font>
+Notice that the first push didn't have to change the stack
+pointer!  This is because the word was already allocated.
+More significantly, <tt>tst (sp)+</tt> only had to
+pop one value off the stack.  
+In the common case where there is only one function argument,
+we can get rid of the pop instruction entirely!
+Of course, this is only a theory, but
+<tt>v6/usr/source/c/c10.c</tt> supports our theory:
+<font size=-1><pre>
+	/*
+	 * Handle a subroutine call. It has to be done
+	 * here because if cexpr got called twice, the
+	 * arguments might be compiled twice.
+	 * There is also some fiddling so the
+	 * first argument, in favorable circumstances,
+	 * goes to (sp) instead of -(sp), reducing
+	 * the amount of stack-popping.
+	 */
+	case CALL:
+</pre></font>
+It's also interesting to note that <tt>popstk</tt>, which
+generates the code to pop the stack, special-cased 2 words
+as well as 1, to save space in the
+instruction encoding
+(<tt>v6/usr/source/c/c11.c</tt>):
+<font size=-1><pre>
+popstk(a)
+{
+	switch(a) {
+
+	case 0:
+		return;
+
+	case 2:
+		printf("tst	(sp)+\n");
+		return;
+
+	case 4:
+		printf("cmp	(sp)+,(sp)+\n");
+		return;
+	}
+	printf("add	$%o,sp\n", a);
+}
+</pre></font>
+Functions with one, two, and three arguments
+were all presumably common enough to warrant this treatment.
+In fact, we can check the kernel sources to find out.
+Here's the breakdown of statements following
+a call instruction (<tt>jsr pc,...</tt>) in the kernel code:
+<font size=-1><pre>
+ 245 tst	(sp)+          <i>pop two args</i>
+  84 jmp	cret
+  47 cmp	(sp)+,(sp)+    <i>pop three args</i>
+  44 add	$6,sp
+  38 mov	r0,r4
+  35 tst	r0
+  13 jsr	pc,_spl0
+  12 mov	r0,r3
+ ...
+</pre></font>
+We could bill all the cases that aren't labeled
+as "pop one arg", since in that case there's
+no instruction at all.  
+It turns out there are 873 function calls
+and 581 of them had no stack pop code
+because they had zero or one arguments.
+<p>
+Note that <tt>case SAVE</tt> above
+didn't do the same special-casing to allocate
+a stack frame of two arguments.
+We might expect that one-word stack frames
+are quite common (one temporary used to 
+compute a return value) while if you've got
+more than one word you're likely to have
+a few, as variables.
+But then, many variables were kept in registers only
+(remember that all registers were callee-save),
+so maybe not.  Again, we can check.
+<p>
+If we look at stack 
+frame sizes by considering instructions
+after <tt>jsr r5,csv</tt> we find that
+out of 239 functions, 206 need no prologue
+whatsoever (they have empty stack frames),
+16 use <tt>tst -(sp)</tt> (they have one-word frames),
+10 use <tt>sub $4, sp</tt> (they have two-word frames),
+3 have three-word frames, 3 have five-word frames,
+and 1 has an eight-word frame.
+Now you can see why leaving about 400 words
+for the kernel stack was <i>plenty</i>.
+So in this case, maybe it would have been
+reasonable to add the extra case.
+(It also seems it would have been
+reasonable to drop the <tt>tst -(sp)</tt> special case.)
+<p>
+As a final interesting footnote,
+here's the equivalent <tt>v5</tt>
+stack generation code, first in the compiler
+(<tt>v5/usr/c/c02.c</tt>):
+<pre>
+	case LBRACE:
+		if (d) {
+			o2 = blkhed() - 4;
+			if (proflg)
+				o = "jsr\tr5,mrsave;0f;%o\n.bss\n0:.=.+2\n.text\n";
+			else
+				o = "jsr	r5,rsave; %o\n";
+			printf(o, o2);
+		}
+</pre>
+and then the register saving routine
+(<tt>v5/usr/source/s4/rsave.s</tt>):
+<font size=-1><pre>
+/ C register save and restore
+
+.globl	rsave
+.globl	mrsave
+.globl	rretrn
+
+mrsave:
+	tst	(r5)+
+
+rsave:
+	mov	r5,r0
+	mov	sp,r5
+	mov	r4,-(sp)
+	mov	r3,-(sp)
+	mov	r2,-(sp)
+	sub	(r0)+,sp
+	jmp	(r0)
+
+rretrn:
+	sub	$6,r5
+	mov	r5,sp
+	mov	(sp)+,r2
+	mov	(sp)+,r3
+	mov	(sp)+,r4
+	mov	(sp)+,r5
+	rts	pc
+</pre></font>
+Can you figure out how it works?
+
+<p>
+<h2>Simulating the x86</h2>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 8.</b>
+Set a breakpoint at address 7C00, which is
+where the disk boot block will be loaded.
+Continue execution until that break point.
+Trace through the next five instructions.
+The next interesting step is transfer of execution
+to the kernel at address 00100020.
+Breakpoint there and then trace the next
+five instructions after that.
+Hand in a transcript of your tracing.
+</table></center>
+<p>
+<font size=-1><pre>
+athena$ bochs-nogui
+========================================================================
+                       Bochs x86 Emulator 1.4.1
+                             June 23, 2002
+========================================================================
+00000000000i[     ] reading configuration from .bochsrc
+00000000000i[     ] .bochsrc: vga_update_interval seems awfully small!
+00000000000i[     ] Warning: no rc file specified.
+00000000000i[     ] using log file bochs.log
+Next at t=0
+(0) f000:fff0: e968e0: jmp +#e068
+&lt;bochs:1&gt; b 0x7c00
+&lt;bochs:2&gt; c
+(0) Breakpoint 1, 0x7c00 in ?? ()
+Next at t=205592
+(0) 0000:7c00: fa: cli
+&lt;bochs:3&gt; s
+Next at t=205593
+(0) 0000:7c01: fc: cld
+&lt;bochs:4&gt; s
+Next at t=205594
+(0) 0000:7c02: 31c0: xor AX, AX
+&lt;bochs:5&gt; s
+Next at t=205595
+(0) 0000:7c04: 8ec0: mov ES, AX
+&lt;bochs:6&gt; s
+Next at t=205596
+(0) 0000:7c06: 8ed8: mov DS, AX
+&lt;bochs:7&gt; s
+Next at t=205597
+(0) 0000:7c08: 8ed0: mov SS, AX
+&lt;bochs:8&gt; b 0x100020
+&lt;bochs:9&gt; c
+(0) Breakpoint 2, 0x100020 in ?? ()
+Next at t=208685
+(0) 0008:00100020 (unknown context): e923000000: jmp +#00000023
+&lt;bochs:10&gt; s
+Next at t=208686
+(0) 0008:00100048 (unknown context): 55: push EBP
+&lt;bochs:11&gt; s
+Next at t=208687
+(0) 0008:00100049 (unknown context): 89e5: mov |MOD3|REG4|RM5| EBP, ESP
+&lt;bochs:12&gt; s
+Next at t=208688
+(0) 0008:0010004b (unknown context): 83ec08: sub |MOD3|REG5|RM4| ESP, #08
+&lt;bochs:13&gt; s
+Next at t=208689
+(0) 0008:0010004e (unknown context): e8f1000000: call 000000f1
+&lt;bochs:14&gt; s
+Next at t=208690
+(0) 0008:00100144 (unknown context): 55: push EBP
+&lt;bochs:15&gt; 
+</pre></font>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 9.</b>
+Reset the machine (exit bochs and start it again).
+Examine the 8 words of memory at 00100000 
+at the two breakpoints from the last exercise.
+Hand in the memory listings.
+Why are they different?
+(You do not need to use Bochs to answer the last question.  Just think.)
+</table></center>
+<p>
+<font size=-1><pre>
+&lt;bochs:1&gt; b 0x7c00
+&lt;bochs:2&gt; c
+(0) Breakpoint 1, 0x7c00 in ?? ()
+Next at t=205592
+(0) 0000:7c00: fa: cli
+&lt;bochs:3&gt; x/8x 0x00100000
+[bochs]:
+0x100000 &lt;bogus+0&gt;:	0x00000000	0x00000000	0x00000000	0x00000000
+0x100010 &lt;bogus+16&gt;:	0x00000000	0x00000000	0x00000000	0x00000000
+&lt;bochs:4&gt; b 0x100020
+&lt;bochs:5&gt; c
+(0) Breakpoint 2, 0x100020 in ?? ()
+Next at t=208685
+(0) 0008:00100020 (unknown context): e923000000: jmp +#00000023
+&lt;bochs:6&gt; x/8x 0x00100000
+[bochs]:
+0x100000 &lt;bogus+0&gt;:	0x0064010b	0x00000fe0	0x00001000	0x00000000
+0x100010 &lt;bogus+16&gt;:	0x00000a80	0x00100020	0x00000000	0x00000000
+&lt;bochs:7&gt; 
+</pre></font>
+<p>
+They are different because the boot loader has run,
+loading the kernel into that memory.
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 10.</b>
+What is the instruction pointer that first writes to location B8001
+in the kernel?
+("Instruction pointer" is the x86 term for the program counter.)
+</table></center>
+<p>
+<tt>0x001002fd</tt>
+<p>
+<h2>Rebuilding the x86 kernel</h2>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 11.</b>
+Change the message that the kernel prints.
+Rebuild and reboot in Bochs.
+Did it work?  If not, make it work.
+</table></center>
+<p>
+Yes.  Yes it did.
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 12.</b>  What are the register values at the breakpoint?
+(Use the <tt>info regs</tt> command.)
+What does the stack look like for 20 (decimal 32) bytes on either side of
+the stack pointer at the breakpoint?
+</table></center>
+<p>
+<font size=-1><pre>
+&lt;bochs:4&gt; info registers
+...
+esp            0x79b0    	0x79b0    
+...
+&lt;bochs:5&gt; x/16w 0x7990
+[bochs]:
+0x7990 &lt;bogus+0&gt;:	0x00000000	0x00000000	0x00000000	0x00000000
+0x79a0 &lt;bogus+16&gt;:	0x00000000	0x00000000	0x00000000	0x00000000
+0x79b0 &lt;bogus+32&gt;:	0x0010004b	0x00000001	0x00000002	0x00007ce3
+0x79c0 &lt;bogus+48&gt;:	0x00000010	0x00101e00	0x00000000	0x00007bf8
+&lt;bochs:6&gt; 
+</pre></font>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 13.</b>  Deduce the
+values held by each stack location near the stack pointer.
+Where is the return PC?  Where are the function arguments?
+You should turn in a chart like before.
+</table></center>
+<p>
+<font size=-1><pre>
+0x7990 0x00000000
+       0x00000000
+       0x00000000
+       0x00000000
+0x79a0 0x00000000
+       0x00000000
+       0x00000000
+       0x00000000
+0x79b0 0x0010004b -- return addr back to cmain
+       0x00000001 -- function arg 1
+       0x00000002 -- function arg 2
+       0x00007ce3 -- scratch space allocated but not used yet in cmain
+0x79c0 0x00000010    ...
+       0x00101e00    ...
+       0x00000000    ...
+       0x00007bf8 -- saved ebp from cmain
+</pre></font>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 14.</b>  Armed with your stack diagram, annotate
+your disassemblies of <tt>cmain</tt> and <tt>f</tt>, explaining
+the purpose of each line.
+</table></center>
+<p>
+<font size=-1><pre>
+00000000 <_f>:
+  push   %ebp               <i>save old ebp</i>
+  mov    %esp,%ebp          <i>save old esp</i>
+  sub    $0x4,%esp          <i>alloc some stack space</i>
+  movl   $0x0,-4(%ebp)      <i>c = 0</i>
+  mov    0x8(%ebp),%eax     <i>eax = a</i>
+  mov    %eax,%edx          <i>edx = a</i>
+  shl    $0x4,%edx          <i>edx <<= 4</i>
+  lea    -4(%ebp),%eax      <i>eax = &c</i>
+  add    %edx,(%eax)        <i>*eax += edx (eax += a<<4)</i>
+  mov    0xc(%ebp),%eax     <i>eax = b</i>
+  mov    %eax,%edx          <i>edx = b</i>
+  shl    $0x6,%edx          <i>edx <<= 6</i>
+  lea    -4(%ebp),%eax      <i>eax = &c</i>
+  add    %edx,(%eax)        <i>*eax += edx (eax += b<<6)</i>
+  mov    -4(%ebp),%eax      <i>eax = c (eax is return register)</i>
+  leave                     <i>restore old ebp, esp</i>
+  ret    
+
+0000002c <_cmain>:
+  push   %ebp               <i>save old ebp</i>
+  mov    %esp,%ebp          <i>save old esp</i>
+  sub    $0x8,%esp          <i>alloc some stack space, not much used</i>
+  sub    $0x8,%esp
+  push   $0x2               <i>push f's arg 2</i>
+  push   $0x1               <i>push f's arg 1</i>
+  call   0 <_f>             <i>call f</i>
+  add    $0x10,%esp         <i>pop arguments</i>
+  mov    %eax,-4(%ebp)      <i>save f's return value into temporary</i>
+  mov    -4(%ebp),%eax      <i>use temporary as our return value</i>
+  leave                     <i>restore old ebp, esp</i>
+  ret    
+</pre></font>
+<p>
+</body>
+</html>

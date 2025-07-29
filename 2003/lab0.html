@@ -1,0 +1,689 @@
+<html>
+<head>
+<title>6.828 Fall 2003 Lab 0: Simulators, Debuggers, and Disassemblers</title>
+</head>
+<body>
+<h2>6.828 Fall 2003 Lab 0</h2>
+<h1>Simulators, Debuggers, and Disassemblers</h1>
+<p>
+<b>Handed out Wednesday, September 3, 2003<br>
+Due Thursday, September 11, 2003</b>
+<p>
+<b>Hand-In Procedure</b>
+<p>
+You are to turn in this lab in the form of a web page.
+When you are done email the URL to <tt>6.828-handin@pdos.lcs.mit.edu</tt>.
+Your web page should contain your answers to the questions.
+<p>
+We don't award web page style points.  Just make a functional web page
+and devote your time to the lab exercises.
+Please put your name on the web page.
+<p>
+<b>Introdution</b>
+<p>
+<i>Note</i>: this lab is intended to be a fun tour
+around the various tools, with us holding your hand.
+If you're not having fun (i.e., you get completely stuck),
+mail <tt>6.828-staff@pdos.lcs.mit.edu</tt> for help.
+Of course, future labs won't be fed to you quite as much.
+<p>
+In this lab you will learn your way around
+the software you'll be using for the course.
+As you know, the course is split between studying the source code
+for the UNIX V6 kernel (which runs on PDP-11s)
+and applying the knowledge you gain in the writing
+of a small operating system for the Intel x86.
+This lab is similarly split.
+<p>
+The bulk of this lab introduces two PDP-11 simulators that can be
+used to run the UNIX V6 source code.
+When you are studying the kernel source throughout the course,
+knowing your way around the simulators and the kernel code
+will let you answer questions by inspecting the running system,
+or even modifying it and recompiling it.  This should yield
+greater understanding of, and perhaps even a greater
+appreciation for, the code.
+<p>
+The second part of this lab introduces an x86 PC simulator that you
+will use to develop your own operating system, starting with
+the next lab.
+Developing and debugging an operating system in
+a simulator is often much simpler and quicker than
+using real hardware.  At the same time, the PC simulator
+is faithful enough that your operating system will run on
+a real PC if you were so inclined.
+<p>
+
+<h2>Acquiring the Software</h2>
+We encourage you to do the labs using Athena, where we 
+have built all the tools for you already.
+<p>
+<i>Note</i>: our software is only configured on the Linux Athena
+machines (i.e., not on the Suns).  Use the <b>uname</b> command
+to make sure you are running on Linux.
+<p>
+To access them, run
+<pre>
+athena% <b>uname</b>
+Linux
+athena% <b>add 6.828 gnu</b>
+athena% 
+</pre>
+<p>
+<h2>UNIX V6 on the PDP-11</h2>
+<p>
+We will use a PDP-11 hardware simulator to provide
+the hardware on which UNIX expects to run.
+The full manual for the simulator is at
+<a href="http://pdos.lcs.mit.edu/6.828/labs/pdp11.txt"
+><tt>http://pdos.lcs.mit.edu/6.828/labs/pdp11.txt</tt></a>.
+You may find it helpful for future reference.
+<p>
+First, you'll need your own copy of the UNIX disk images
+and a copy of the UNIX sources too, for later.
+<pre>
+athena% <b>cd ~</b>
+athena% <b>mkdir 6.828</b>
+athena% <b>cd 6.828</b>
+athena% <b>cp -R /mit/6.828/sw/v6rk .</b>
+athena% <b>cp -R /mit/6.828/sw/v6 .</b>
+athena% <b>cd v6rk</b>
+athena% <b>ls -l v6*</b>
+total 6043
+-rw-rw-r--  1 rsc  rsc  2048000 Sep  1 21:57 v6doc
+-rw-rw-r--  1 rsc  rsc  2060800 Sep  1 22:19 v6root
+-rw-rw-r--  1 rsc  rsc  2048000 Sep  1 21:57 v6src
+athena% 
+</pre>
+There are three disks, named <tt>v6doc</tt>, <tt>v6root</tt>, and <tt>v6src</tt>.
+<p>
+To boot UNIX, start the simulator and type the following at the prompts.
+<pre>
+athena% <b>pdp11</b>
+
+PDP-11 simulator V2.3d
+sim&gt; <b>attach rk0 v6root</b>
+sim&gt; <b>attach rk1 v6src</b>
+sim&gt; <b>attach rk2 v6doc</b>
+sim&gt; <b>boot rk0</b>
+</pre>
+The lines typed at the <tt>sim&gt;</tt> prompts
+configure the machine being simulated.  In particular,
+they attach three disks to the machine as devices
+<tt>rk0</tt>, <tt>rk1</tt>, and <tt>rk2</tt> and then
+boot from disk <tt>rk0</tt>.
+You can abbreviate <tt>attach</tt> down to <tt>a</tt>
+and <tt>boot</tt> down to <tt>b</tt>.
+<p>
+Now the boot loader begins.  You give it a kernel name
+and log in:
+<pre>
+@<b>unix</b>
+
+login: <b>root</b>
+# <b>stty erase <i>backspace</i></b>
+# <b>stty kill <i>control-U</i></b>
+# <b>ls -l</b>
+total 70
+drwxrwxr-x  2 bin      1104 May 14 00:47 bin
+drwxrwxr-x  2 bin      1824 Aug 14 22:17 dev
+drwxrwxr-x  2 bin       496 Aug 14 22:22 etc
+drwxrwxr-x  2 bin       464 May 13 23:35 lib
+drwxrwxr-x  2 bin        32 May 13 20:01 mnt
+drwxrwxrwx  2 bin       272 Jul 18 09:19 tmp
+-rw-rw-rw-  1 root    28854 Jul 18 09:18 unix
+drwxrwxr-x 15 bin       240 Aug 14 22:19 usr
+# 
+</pre>
+<p>
+The <tt>@</tt> prompt is printed by the boot loader,
+asking for the name of the kernel file in the root directory.
+If you were trying a new kernel, you might install it as
+<tt>/unix.new</tt> rather than overwrite <tt>/unix</tt>,
+so that you could still boot the old kernel if it turned
+out your changes weren't for the best.
+<p>
+The <tt>stty</tt> commands set up your terminal.
+(Type real backspace and control-U characters.)
+<b><i>You must type the first few lines perfectly!</i></b>
+Until you run the first <tt>stty</tt> command, backspace will
+<i>appear</i> to work but not actually work -- although your
+xterm (or whatever) window is processing backspace properly,
+the UNIX V6 tty driver treats it as just another character
+until <tt>stty</tt> has done its magic.
+(The default settings are <tt>#</tt> for the erase character and <tt>@</tt>
+for the line kill character.)
+<p>
+You may find it interesting to poke around.
+It's impressive how many tools are packed into that 2MB disk image.
+The shell command to change directories is <tt>chdir</tt>, not <tt>cd</tt>.
+<p>
+To get back out to the simulator prompt, type control-E.
+When you do that (actually, every time the simulation stops)
+the simulator prints information about the machine register state.
+The register values are printed in octal, and all the interaction
+with the simulator is in octal as well.
+(The computer world of 2003 has now settled on hexadecimal,
+but octal was the way of life in 1977.  When we're talking about
+UNIX we'll assume octal, but when we talk about the x86 we'll
+assume hexadecimal.)
+<p>
+To reset the machine and boot again, run the commands
+<pre>
+sim&gt; <b>reset</b>
+sim&gt; <b>boot rk0</b>
+</pre>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 1.</b> The PDP-11 simulator provides
+a register SR to allow you to pretend to
+set the switches that would be on the front of a real
+PDP-11.  Run the command <tt>e sr</tt> (<tt>e</tt>
+stands for examine) to look at the current value of SR.
+What is it?
+Run <tt>d sr 1</tt> (<tt>d</tt> stands for deposit)
+to change the SR value.
+Boot again.  What's different?
+Poke around in <tt>~/6.828/v6/usr/sys</tt> to find
+where that came from.
+Why didn't you see it the first time you booted?
+(Hint: you ran the same kernel both times,
+so the answer is <i>not</i> that the switches caused
+a different kernel to be loaded.)
+</table></center>
+<p>
+The debugger command <tt>e state</tt> prints the entire state of the CPU,
+including the registers you've seen at the breakpoints and also various 
+segmentation and device registers.
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 2.</b> 
+Save a transcript of the following session.
+The UNIX kernel boot sequence starts
+at address 40 (octal).  Run the command <tt>d break 40</tt>
+to set a breakpoint (there's only one!) at address 40.
+Boot again.  When the kernel stops at address 40, what is
+the next instruction it will execute?
+Run the command <tt>s</tt> (for step) to execute that one instruction.
+Now what is the <tt>PC</tt> set to?
+Examine the next 20 bytes of instructions to run by executing <tt>e xxx-yyy</tt>
+where <tt>xxx</tt> is the current value of the <tt>PC</tt>,
+and <tt>yyy</tt> is <tt>xxx</tt> plus 20.
+By default <tt>e</tt> prints the octal words it is examining.
+You can examine instructions with the <tt>-m</tt> flag.
+Try <tt>e -m xxx-yyy</tt>.
+Does each instruction occupy the same number of bytes in memory?
+Run <tt>t 5</tt> to trace through those instructions.  (You could also
+run <tt>s</tt> 5 times.  <tt>s 5</tt> would step through the 5 instructions
+but not print the register states after each one.)
+Clear the breakpoint by setting it to an innocuous value like
+the top of memory: <tt>d break 177777</tt>.
+Then let the simulation continue: <tt>c</tt>.
+Hand in the transcript of your session, along with the answers
+to the three questions above.
+</table></center>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#ffe0e0>
+<b>Challenge!</b>
+After letting the machine run for a second, type Control-E
+and look around.  What's going on in the machine?  How did it get there?
+</table></center>
+<p>
+(<i>Note</i>: challenge questions are 100% optional.  They are exercises we think
+would be fun (though often a fair amount of work) for students who
+are super excited about the material.
+You can answer the challenge questions,
+and we will correct your answers, but they have no effect
+whatsoever on your course grade.)
+<p>
+To close the simulator, type Control-E to get back to the prompt
+and then type <tt>q</tt>.
+<p>
+<h2>Rebuilding the UNIX kernel</h2>
+<p>
+Now we'll walk through rebuilding the UNIX kernel,
+so you can try out your own changes. 
+It's easier
+if we build the kernel from files on your actual file
+system rather than in an opaque RK05 disk image.
+Then you could use your favorite editor to edit the sources.
+(You could edit the sources in the PDP11 simulator using <tt>ed</tt>
+if you so desired, though doing that corrupted the one source file I tried to edit.)
+On the other hand, the early dialect of C used in 1976 won't
+work in any of today's C compilers, so we have to use the
+V6 C compilers.
+<p>
+To resolve this, we'll use a different PDP-11 simulator.
+This simulator is for running PDP-11 UNIX binaries
+like <tt>/bin/ls</tt>.  It simulates the instructions in
+the binary, but responds to the system calls using whatever
+operating system is running on the Athena machine.
+<p>
+(Assuming you have already run the <tt>add</tt> and <tt>cp</tt> commands
+from the previous section...)
+<pre>
+athena% <b>setenv V6ROOT ~/6.828/v6</b>
+athena% <b>cd ~/6.828/v6rk</b>
+athena% <b>v6 ls -l</b>
+total 12075
+drwxrwxr-x  1 root        0 Sep  2 02:11 CVS
+-rw-rw-r--  1 root      315 Sep  2 02:08 README.828
+-rw-rw-r--  1 root      512 Sep  2 01:50 boot.rk
+-rw-rw-r--  1 root  2048000 Sep  2 02:05 v6doc
+-rw-rw-r--  1 root        0 Sep  2 02:08 v6man
+-rw-rw-r--  1 root  2060800 Sep  2 04:19 v6root
+-rw-rw-r--  1 root  2048000 Sep  2 02:05 v6src
+athena% 
+</pre>
+The <tt>v6</tt> command runs V6 binaries (found in <tt>$V6ROOT/bin</tt>).
+It ran the V6 <tt>ls</tt> but on Athena.
+If this seems strange, that's okay.
+For now, think of <tt>v6</tt> as a black box that runs
+old UNIX binaries on new systems.
+At the end of the semester you'll be able to look back
+at this and immediately figure out what's going on under the covers.
+<p>
+V6 UNIX didn't have <tt>make</tt>, but we've written a <tt>Makefile</tt>
+anyway, to make the kernel easier to build.
+To build the kernel, run <tt>gmake</tt> in <tt>~/6.828/v6/usr/sys/conf</tt>.
+<p>
+Now that you know the kernel builds,
+change the message in the <tt>printf</tt> call you found earlier.
+Build the kernel again.
+<p>
+After running <tt>gmake</tt>, you'll have a compiled UNIX kernel
+in a file named <tt>unix</tt>.  You need to get this kernel onto
+the RK05 disk image so that the boot loader can find it.
+To do this, you'll use <tt>v6de</tt>, a V6 disk editor.
+The magic command is:
+<pre>
+athena% <b>v6de ~/6.828/v6rk/v6root 'cp :unix /unix.new'</b>
+athena% 
+</pre>
+The first argument to <tt>v6de</tt> is the name of a disk image.
+The rest of the arguments are commands to run.
+(If you don't specify any commands, <tt>v6de</tt>
+runs an interactive shell.)
+The command <tt>cp</tt> copies files between Athena and the disk image.
+Files in Athena are denoted by a leading <tt>:</tt>.
+The above command copies the file <tt>unix</tt> from the 
+current Athena directory into <tt>unix.new</tt> in the root
+directory of the disk image.
+(The command <tt>'cp /unix :unix.old'</tt> would copy the kernel
+we used before off the disk image and onto Athena.)
+<p>
+Now you can boot the simulator as you did before (remember
+to <tt>cd</tt> to <tt>~/6.828/v6rk</tt> first), but type <tt>unix.new</tt>
+at the <tt>@</tt> prompt.
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 3.</b> Boot your modified kernel. 
+Did it work as expected?  (If not, figure out why and repeat.)
+</table></center>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#ffe0e0>
+<b>Challenge!</b> <tt>/usr/sys/run</tt> is a script of commands
+to run to build the kernel.  Try running them under <tt>v6 sh</tt>.
+It doesn't quite work.  Figure out why.
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Try running them in the PDP-11 simulator, under real UNIX.  
+It doesn't quite work, in a different way.  Figure out why.
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;
+<p>
+<i>Warning</i>: the course staff do not know what is
+causing these bugs.  They might be original bugs or it could
+(perhaps more likely) be bugs in the simulators.
+We don't know exactly how challenging this question is.
+</table></center>
+
+<h2>UNIX C calling conventions</h2>
+<p>
+Now we'll explore the correspondence between C code
+and the machine code it compiles into in V6.
+You will almost certainly find it useful to read chapter 2 of Lions
+to brush up on PDP-11 assembly.
+<p>
+Create a file <tt>x.c</tt> that contains:
+<center>
+<table><tr><td>
+<pre>
+f(a, b)
+{
+	int c;
+
+	c = 0;
+	c =+ a*010;
+	c =+ b*040;
+	return c;
+}
+
+main()
+{
+	int x;
+
+	x = f(1,2);
+	return x;
+}
+</pre>
+</table></center>
+and then compile and run it:
+<pre>
+athena% <b>v6 cc x.c</b>
+athena% <b>v6 ./a.out</b>
+athena% <b>echo $?</b>
+XXX
+athena% 
+</pre>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 4.</b>  What is the exit status (the XXX in the transcript)?
+</table></center>
+<p>
+Now we'll examine the code generated for these functions.
+To dump the symbol table and extract the addresses of the
+functions, use:
+<pre>
+athena% <b>v6 db ./a.out</b>
+<b>_main=</b>
+104
+<b>_main,20?</b>
+jsr r5,csv
+...
+jmp cret
+...
+<b>_f,20?</b>
+jsr r5,csv
+...
+jmp cret
+...
+</pre>
+<p>
+The command <tt>_main=</tt> prints the address
+of the symbol <tt>_main</tt> (the C compiler automatically prefixes
+all C names with <tt>_</tt>
+to avoid conflicts with names used in assembly files).
+The command <tt>_main,20?</tt> prints the 20 instructions
+starting at the address of the symbol <tt>_main</tt>.
+Note that the first instructions of a C function are <tt>jsr r5,csv</tt>
+and <tt>tst -(sp)</tt>.
+C functions end with a <tt>br</tt> and then <tt>jmp cret</tt>,
+which eventually returns to the caller.
+These sequences serve as a good way to figure out where
+the relevant assembly dump stops.
+<p>
+The debugger tries to be helpful, translating constants
+into symbolic form in the disassembly.
+For example, if <tt>_main</tt> is 104, then 142 is printed as 
+<tt>_main+36</tt>.
+Unfortunately, there are some symbols near 0 that the debugger
+misuses to print values that really should display as numeric constants.
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#ffe0e0>
+Challenge!  The source for the debugger is in
+<tt>/usr/source/s1/db*.s</tt> in V6.  Fix it.
+</table></center>
+<p>
+Print the addresses of the ``small'' symbols
+<tt>a</tt>, <tt>b</tt>, <tt>start</tt>, and <tt>x</tt>.
+(<tt>x</tt> prints as a large positive 16-bit number.  
+What is it as a small negative 16-bit number?)
+Disassemble <tt>main</tt> and <tt>f</tt>.
+Replace symbolic constants involving the small symbols
+with actual constants.
+Save the edited disassemblies for later.
+<p>
+Now we're going to run the code in the PDP11 machine
+simulator to discover exactly what the stack layout looks like.
+<p>
+Make a backup copy of <tt>ken/main.c</tt> and then replace
+its <tt>main</tt> with our version, including the <tt>f</tt> function.
+Recompile your kernel and install it in the RK05 disk.
+Use <tt>db</tt> to print the addresses of the functions
+<tt>f</tt> and <tt>main</tt> in the new kernel.
+Use <tt>pdp11</tt> to set a breakpoint at the address of <tt>f</tt>
+and then boot the new kernel until it reaches the breakpoint.
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 5.</b>  What are the register values at the breakpoint?
+What does the stack look like for 10 (decimal 8!) words on either side of
+the stack pointer at the breakpoint?
+</table></center>
+<p>
+(To look at the stack, note the kernel stack pointer <tt>KSP</tt>
+and then run <tt>e -v xxx-yyy</tt> where <tt>xxx</tt> is KSP minus 20
+and <tt>yyy</tt> is KSP plus 20.
+Words are two bytes, so 10 words is 20 bytes.
+The <tt>-v</tt> flag tells the debugger
+to interpret the argument as a vritual rather than physical address.
+We'll learn more about what that means in the next lab.)
+<p>
+Note the value pointed at by the stack pointer.
+This is the return address for <tt>f</tt>'s caller.
+In particular, it's the address of the instruction after the <tt>jsr</tt> in <tt>main</tt>
+that got us here.
+Set the breakpoint to that address and then execute <tt>t 1000</tt>
+to trace until you hit the breakpoint (which will happen in far less
+than 1000 instructions).
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 6.</b>  Deduce the
+values held by each stack location near the stack pointer.
+Where is the return PC?  Where are the function arguments?
+What is stored in the addresses below the stack pointer when
+<tt>jsr r5,csv</tt> executes?  You should turn in a chart like
+the one on Lions page 10-3, but explain what every stack word is used for!
+</table></center>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 7.</b>  Armed with your stack diagram, annotate
+your disassemblies of <tt>main</tt> and <tt>f</tt>, explaining
+the purpose of each line.
+</table></center>
+<p>
+
+<h2>Simulating the x86</h2>
+Now let's switch gears and learn our way around
+the x86 tools.
+Luckily, they behave like the PDP-11 tools more or less, so this
+shouldn't take as long.
+
+You may wish to review your x86 assembly by skimming
+the <a href="../readings/pcasm.pdf">PC Assembly Book</a>.
+<p>
+The PC simulator is named Bochs.
+Copy our Bochs configuration and disk image and then start <tt>bochs</tt>:
+<pre>
+athena% <b>cd ~/6.828</b>
+athena% <b>cp -R /mit/6.828/sw/x86boot .</b>
+athena% <b>cd x86boot</b>
+athena% <b>bochs</b>
+========================================================================
+                       Bochs x86 Emulator 1.4.1
+                             June 23, 2002
+========================================================================
+00000000000i[     ] reading configuration from .bochsrc
+00000000000i[     ] .bochsrc: vga_update_interval seems awfully small!
+00000000000i[     ] Warning: no rc file specified.
+00000000000i[     ] using log file bochs.log
+Next at t=0
+(0) f000:fff0: e968e0: jmp +#e068
+&lt;bochs:1&gt; 
+</pre>
+Bochs has read the file <tt>.bochsrc</tt>, started the
+simulated machine (an X window will pop up showing the screen),
+and is ready to execute the first instruction.
+You can set a breakpoint with the <tt>b</tt> command.
+You have to give the base explicitly, so say
+<tt>b 0x7C00</tt> (we've switched to hexadecimal).
+A full command overview is at
+<a href="http://bochs.sourceforge.net/doc/docbook/user/x2095.html"
+><tt>http://bochs.sourceforge.net/doc/docbook/user/x2095.html</tt></a>.
+The commands <tt>c</tt> and <tt>s</tt> behave the same as 
+in the PDP-11 simulator.
+There is no <tt>t</tt> command.  Instead, use <tt>trace-on</tt>
+and <tt>trace-off</tt> to set tracing before using the other commands.
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 8.</b>
+Set a breakpoint at address 7C00, which is
+where the disk boot block will be loaded.
+Continue execution until that break point.
+Trace through the next five instructions.
+The next interesting step is transfer of execution
+to the kernel at address 00100020.
+Breakpoint there and then trace the next
+five instructions after that.
+Hand in a transcript of your tracing.
+</table></center>
+<p>
+To examine memory in the simulator, you use the
+<tt>x</tt> command, which has the same syntax as <tt>gdb</tt>'s.
+The command overview (linked above) has full details.
+For now, it is enough to know that
+the recipe <tt>x/<i>n</i>x <i>addr</i></tt> prints <i>n</i> words of memory at addr.  (Note that both <tt>x</tt>s in the command are lowercase.)
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 9.</b>
+Reset the machine (exit bochs and start it again).
+Examine the 8 words of memory at 00100000 
+at the two breakpoints from the last exercise.
+Hand in the memory listings.
+Why are they different?
+(You do not need to use Bochs to answer the last question.  Just think.)
+</table></center>
+<p>
+When the kernel runs, it colors the top line of the screen blue.
+Suppose you noticed this and 
+wanted to find the code that was actually doing this.
+One way would be to set a ``data watch,'' a break point that
+fires when a particular memory location is read or written.
+The color attribute of the top left cell on the screen is stored
+in physical memory location B8001.
+To set a data watch:
+<pre>
+&lt;bochs:1&gt; <b>watch write 0xB8001</b>
+&lt;bochs:2&gt; <b>watch stop</b>
+&lt;bochs:3&gt; <b>c</b>
+</pre>
+The first line sets the watch.  The second line instructs
+<tt>bochs</tt> to stop the simulation whenever a watch fires.
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 10.</b>
+What is the instruction pointer that first writes to location B8001
+in the kernel?
+("Instruction pointer" is the x86 term for the program counter.)
+</table></center>
+<p>
+<h2>Rebuilding the x86 kernel</h2>
+<p>
+It's a little generous to call the code we're running a ``kernel,'' but so be it.
+<p>
+To rebuild the x86 kernel and disk image,
+<pre>
+athena% <b>cd ~/6.828/x86boot</b>
+athena% <b>gmake kernel</b>
+athena% <b>gmake disk</b>
+</pre>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 11.</b>
+Change the message that the kernel prints.
+Rebuild and reboot in Bochs.
+Did it work?  If not, make it work.
+</table></center>
+<p>
+<h2>GCC x86 Calling Conventions</h2>
+<p>
+We will repeat the exercise we did above to learn
+about the calling conventions on UNIX.
+Create a file <tt>x.c</tt> containing (this is different from the V6 one!):
+<center>
+<table><tr><td>
+<pre>
+f(a, b)
+{
+	int c;
+
+	c = 0;
+	c += a*0x10;
+	c += b*0x40;
+	return c;
+}
+
+cmain()
+{
+	int x;
+
+	x = f(1,2);
+	return x;
+}
+</pre>
+</table></center>
+Compile it:
+<pre>
+athena% <b>i386-osclass-aout-gcc -c x.c</b>
+</pre>
+<p>
+
+Use <tt>i386-osclass-aout-objdump</tt> to disassemble it.
+<pre>
+athena% <b>i386-osclass-aout-objdump -S x.o</b>
+</pre>
+
+<p>
+Now replace <tt>cmain</tt> in <tt>~/6.828/x86boot/kernel.c</tt>
+with these two functions.  Rebuild your kernel.
+Note the addresses of <tt>cmain</tt> and <tt>f</tt> in the rebuilt
+kernel:
+<pre>
+athena% <b>cd ~/6.828/kernel</b>
+athena% <b>gmake kernel</b>
+...
+athena% <b>i386-osclass-aout-nm kernel | egrep 'T _(cmain|f)$'</b>
+</pre>
+
+Now run the new kernel in Bochs (remember to <tt>gmake disk</tt>!),
+breaking at <tt>f</tt>.
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 12.</b>  What are the register values at the breakpoint?
+(Use the <tt>info regs</tt> command.)
+What does the stack look like for 20 (decimal 32) bytes on either side of
+the stack pointer at the breakpoint?
+</table></center>
+<p>
+Set a break point at the return PC for <tt>f</tt> (just like in the
+PDP-11, it should be the value pointed at by the stack pointer).
+Turn tracing on and run until that break point.
+Note that unlike in the PDP-11 simulator, Bochs does not 
+print register information at each trace point, which
+makes your life a little harder.
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 13.</b>  Deduce the
+values held by each stack location near the stack pointer.
+Where is the return PC?  Where are the function arguments?
+You should turn in a chart like before.
+</table></center>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#e0e0ff>
+<b>Exercise 14.</b>  Armed with your stack diagram, annotate
+your disassemblies of <tt>cmain</tt> and <tt>f</tt>, explaining
+the purpose of each line.
+</table></center>
+<p>
+<center><table border=1 width=80%><tr><td bgcolor=#ffe0e0>
+Challenge!  
+Look at the rules in the <tt>Makefile</tt> in <tt>~/6.828/x86boot</tt>
+that build <tt>boot</tt>, the boot loader.
+The <tt>-e start</tt> option instructs <tt>ld</tt> to use <tt>start</tt>
+as the entry point for the program.
+<tt>Start</tt> is defined in <tt>l.s</tt> as a one-instruction function
+that does <tt>jmp _cmain</tt>.
+Why not just use <tt>-e cmain</tt> instead and not bother linking with
+<tt>l.s</tt> at all?
+Try this.  Figure out why it fails.  Can you make it work without any 
+assembly (i.e., using only C)?
+</table></center>
+

@@ -1,0 +1,549 @@
+<html>
+<head>
+<title>6.828 Fall 2003 Lab 2 SOLUTIONS: Memory Management</title>
+</head>
+<body>
+<h2>6.828 Fall 2003 Lab 2</h2>
+<h1>Memory Management</h1>
+<p>
+<b>Exercise 1: VM Layout</b>
+<p>
+We used the following functions:
+<pre>
+//
+// Allocate n bytes of physical memory aligned on an 
+// align-byte boundary.  Align must be a power of two.
+// Return kernel virtual address.  If clear != 0, zero
+// the memory.
+//
+// If we're out of memory, alloc should panic.
+// It's too early to run out of memory.
+// 
+static void *
+alloc(u_int n, u_int align, int clear)
+{
+	extern char end[];
+	void *v;
+
+	// initialize freemem if this is the first time
+	if (freemem == 0)
+		freemem = (u_long)end;
+
+	// Your code here:
+	//	Step 1: round freemem up to be aligned properly
+	//	Step 2: save current value of freemem as allocated chunk
+	//	Step 3: increase freemem to record allocation
+	//	Step 4: clear allocated chunk if necessary
+	//	Step 5: return allocated chunk
+
+	freemem = ROUND(freemem, align);
+	if (freemem+n &lt; freemem || freemem+n &gt; KERNBASE+maxpa)
+		panic("out of memory during i386_vm_init");
+	v = (void*)freemem;
+	freemem += n;
+	if (clear)
+		bzero(v, n);
+	return v;
+}
+
+//
+// Given pgdir, the current page directory base,
+// walk the 2-level page table structure to find
+// the Pte for virtual address va.  Return a pointer to it.
+//
+// If there is no such directory page:
+//	- if create == 0, return 0.
+//	- otherwise allocate a new directory page and install it.
+//
+// This function is abstracting away the 2-level nature of
+// the page directory for us by allocating new page tables
+// as needed.
+// 
+// Boot_pgdir_walk cannot fail.  It's too early to fail.
+// 
+static Pte*
+boot_pgdir_walk(Pde *pgdir, u_long va, int create)
+{
+	Pde *pde;
+	Pte *pgtab;
+
+	pde = &amp;pgdir[PDX(va)];
+	if (*pde &amp; PTE_P)
+		pgtab = (Pte*)KADDR(PTE_ADDR(*pde));
+	else {
+		if (!create)
+			return 0;
+		pgtab = alloc(BY2PG, BY2PG, 1);
+		*pde = PADDR(pgtab)|PTE_P|PTE_W|PTE_U;
+	}
+	return &amp;pgtab[PTX(va)];
+}
+
+//
+// Map [va, va+size) of virtual address space to physical [pa, pa+size)
+// in the page table rooted at pgdir.  Size is a multiple of BY2PG.
+// Use permission bits perm|PTE_P for the entries.
+//
+static void
+boot_map_segment(Pde *pgdir, u_long va, u_long size, u_long pa, int perm)
+{
+	u_long i;
+
+	for (i=0; i&lt;size; i+=BY2PG)
+		*boot_pgdir_walk(pgdir, va+i, 1) = (pa+i)|perm|PTE_P;
+}
+
+// Set up a two-level page table:
+//    boot_pgdir is its virtual address of the root
+//    boot_cr3 is the physical adresss of the root
+// Then turn on paging.  Then effectively turn off segmentation.
+// (i.e., the segment base addrs are set to zero).
+// 
+// This function only sets up the kernel part of the address space
+// (ie. addresses &gt;= UTOP).  The user part of the address space
+// will be setup later.
+//
+// From UTOP to ULIM, the user is allowed to read but not write.
+// Above ULIM the user cannot read (or write). 
+void
+i386_vm_init(void)
+{
+	Pde *pgdir;
+	u_int cr0, n;
+
+
+	//////////////////////////////////////////////////////////////////////
+	// create initial page directory.
+	pgdir = alloc(BY2PG, BY2PG, 1);
+	boot_pgdir = pgdir;
+	boot_cr3 = PADDR(pgdir);
+
+	//////////////////////////////////////////////////////////////////////
+	// Recursively insert PD in itself as a page table, to form
+	// a virtual page table at virtual address VPT.
+	// (For now, you don't have understand the greater purpose of the
+	// following two lines.)
+
+	// Permissions: kernel RW, user NONE
+	pgdir[PDX(VPT)] = PADDR(pgdir)|PTE_W|PTE_P;
+
+	// same for UVPT
+	// Permissions: kernel R, user R 
+	pgdir[PDX(UVPT)] = PADDR(pgdir)|PTE_U|PTE_P;
+
+	//////////////////////////////////////////////////////////////////////
+	// Map the kernel stack (symbol name "bootstack"):
+	//   [KSTACKTOP-PDMAP, KSTACKTOP)  -- the complete VA range of the stack
+	//     * [KSTACKTOP-KSTKSIZE, KSTACKTOP) -- backed by physical memory
+	//     * [KSTACKTOP-PDMAP, KSTACKTOP-KSTKSIZE) -- not backed =&gt; faults
+	//   Permissions: kernel RW, user NONE
+	// Your code goes here:
+	boot_map_segment(pgdir, KSTACKTOP-KSTKSIZE, KSTKSIZE,
+		PADDR(bootstack), PTE_W);
+
+	//////////////////////////////////////////////////////////////////////
+	// Map all of physical memory at KERNBASE. 
+	// Ie.  the VA range [KERNBASE, 2^32 - 1] should map to
+	//      the PA range [0, 2^32 - 1 - KERNBASE]   
+	// We might not have that many(ie. 2^32 - 1 - KERNBASE)    
+	// bytes of physical memory.  But we just set up the mapping anyway.
+	// Permissions: kernel RW, user NONE
+	// Your code goes here: 
+	boot_map_segment(pgdir, KERNBASE, -KERNBASE, 0, PTE_W);
+
+	//////////////////////////////////////////////////////////////////////
+	// Make 'pages' point to an array of size 'npage' of 'struct Page'.   
+	// You must allocate this array yourself.
+	// Map this array read-only by the user at virtual address UPAGES
+	// (ie. perm = PTE_U | PTE_P)
+	// Permissions:
+	//    - pages -- kernel RW, user NONE
+	//    - the image mapped at UPAGES  -- kernel R, user R
+	// Your code goes here: 
+	n = npage*sizeof(struct Page);
+	pages = alloc(n, BY2PG, 1);
+	boot_map_segment(pgdir, UPAGES, n, PADDR(pages), PTE_U);
+
+	//////////////////////////////////////////////////////////////////////
+	// Make 'envs' point to an array of size 'NENV' of 'struct Env'.
+	// You must allocate this array yourself.
+	// Map this array read-only by the user at virtual address UENVS
+	// (ie. perm = PTE_U | PTE_P)
+	// Permissions:
+	//    - envs itself -- kernel RW, user NONE
+	//    - the image of envs mapped at UENVS  -- kernel R, user R
+	// Your code goes here: 
+	n = NENV*sizeof(struct Env);
+	envs = alloc(n, BY2PG, 1);
+	boot_map_segment(pgdir, UENVS, n, PADDR(envs), PTE_U);
+
+	check_boot_pgdir();
+
+	//////////////////////////////////////////////////////////////////////
+	// On x86, segmentation maps a VA to a LA (linear addr) and
+	// paging maps the LA to a PA.  I.e. VA =&gt; LA =&gt; PA.  If paging is
+	// turned off the LA is used as the PA.  Note: there is no way to
+	// turn off segmentation.  The closest thing is to set the base
+	// address to 0, so the VA =&gt; LA mapping is the identity.
+
+	// Current mapping: VA KERNBASE+x =&gt; PA x.
+	//     (segmentation base=-KERNBASE and paging is off)
+
+	// From here on down we must maintain this VA KERNBASE + x =&gt; PA x
+	// mapping, even though we are turning on paging and reconfiguring
+	// segmentation.
+
+	// Map VA 0:4MB same as VA KERNBASE, i.e. to PA 0:4MB.
+	// (Limits our kernel to &lt;4MB)
+	pgdir[0] = pgdir[PDX(KERNBASE)];
+
+	// Install page table.
+	lcr3(boot_cr3);
+
+	// Turn on paging.
+	cr0 = rcr0();
+	cr0 |= CR0_PE|CR0_PG|CR0_AM|CR0_WP|CR0_NE|CR0_TS|CR0_EM|CR0_MP;
+	cr0 &amp;= ~(CR0_TS|CR0_EM);
+	lcr0(cr0);
+
+	// Current mapping: KERNBASE+x =&gt; x =&gt; x.
+	// (x &lt; 4MB so uses paging pgdir[0])
+
+	// Reload all segment registers.
+	asm volatile("lgdt _gdt_pd+2");
+	asm volatile("movw %%ax,%%gs" :: "a" (GD_UD|3));
+	asm volatile("movw %%ax,%%fs" :: "a" (GD_UD|3));
+	asm volatile("movw %%ax,%%es" :: "a" (GD_KD));
+	asm volatile("movw %%ax,%%ds" :: "a" (GD_KD));
+	asm volatile("movw %%ax,%%ss" :: "a" (GD_KD));
+	asm volatile("ljmp %0,$1f\n 1:\n" :: "i" (GD_KT));  // reload cs
+	asm volatile("lldt %0" :: "m" (0));
+
+	// Final mapping: KERNBASE+x =&gt; KERNBASE+x =&gt; x.
+
+	// This mapping was only used after paging was turned on but
+	// before the segment registers were reloaded.
+	pgdir[0] = 0;
+
+	// Flush the TLB for good measure, to kill the pgdir[0] mapping.
+	lcr3(boot_cr3);
+}
+</pre>
+
+Questions:
+
+<ol>
+<li>
+The page directory corresponds to the map in mmu.h from ULIM up,
+with 4MB of address in mmu.h's picture corresponding to one directory 
+entry.
+
+<li>The mapping is necessary because after we turn on paging but
+before we ``disable'' segmentation, the paging hardware is passed addresses
+that have already been translated.  These addresses will be small (less than 4MB),
+so the entry in <code>pgdir[0]</code> implements an identity mapping
+to pass these already-translated addresses through unchanged.
+
+<li>The bit used is the <code>PTE_U</code> bit in the page directory
+and page table entries.
+
+<li>There is no equivalent bit on the PDP-11/40.
+V6 could have built a similar mapping by keeping the user and kernel
+address spaces in sync, but it couldn't share the address registers
+exactly like the X86 kernel can.
+</ol>
+
+<p>
+
+<b>Exercise 2: Physical page management</b>
+
+<pre>
+//  
+// Initialize page structure and memory free list.
+//
+void
+page_init(void)
+{
+	int i, inuse;
+
+	LIST_INIT (&amp;page_free_list);
+
+	// Align freemem to page boundary.
+	alloc(0, BY2PG, 0);
+
+	for (i=0; i&lt;npage; i++) {
+		// Off-limits until proven otherwise.
+		inuse = 1;
+
+		// The bottom basemem bytes are free except page 0.
+		if (i!=0 &amp;&amp; i&lt;basemem/BY2PG)
+			inuse = 0;
+
+		// The IO hole and the kernel abut.
+
+		// The memory past the kernel is free.
+		if (i &gt;= (freemem-KERNBASE)/BY2PG)
+			inuse = 0;
+
+		pages[i].pp_ref = inuse;
+		if (!inuse)
+			LIST_INSERT_HEAD(&amp;page_free_list, &amp;pages[i], pp_link);
+	}
+	
+}
+
+//
+// Allocates a physical page.
+//
+// *pp -- is set to point to the Page struct of the newly allocated
+// page
+//
+// RETURNS 
+//   0 -- on success
+//   -E_NO_MEM -- otherwise 
+//
+// Hint: use LIST_FIRST, LIST_REMOVE, page_initpp()
+// Hint: pp_ref should not be incremented 
+int
+page_alloc(struct Page **pp)
+{
+	// Fill this function in
+	*pp = LIST_FIRST (&amp;page_free_list);
+	if (*pp) {
+		LIST_REMOVE(*pp, pp_link);
+		page_initpp(*pp);
+		return 0;
+	}
+
+	warn("page_alloc() can't find memory");
+	return -E_NO_MEM;
+}
+
+//
+// Return a page to the free list.
+// (This function should only be called when pp-&gt;pp_ref reaches 0.)
+//
+void
+page_free(struct Page *pp)
+{
+	if (pp-&gt;pp_ref) {
+		warn("page_free: attempt to free mapped page");
+		return;		/* be conservative and assume page is still used */
+	}
+	LIST_INSERT_HEAD(&amp;page_free_list, pp, pp_link);
+	pp-&gt;pp_ref = 0;
+}
+
+//
+// This is boot_pgdir_walk with a different allocate function.
+// Unlike boot_pgdir_walk, pgdir_walk can fail, so we have to
+// return pte via a pointer parameter.
+//
+// Stores address of page table entry in *pte.
+// Stores 0 if there is no such entry or on error.
+// 
+// RETURNS: 
+//   0 on success
+//   -E_NO_MEM, if page table couldn't be allocated
+//
+int
+pgdir_walk(Pde *pgdir, u_long va, int create, Pte **ppte)
+{
+	int r;
+	struct Page *pp;
+	Pde *pde;
+	Pte *pgtab;
+
+	*ppte = 0;
+	pde = &amp;pgdir[PDX(va)];
+	if (*pde &amp; PTE_P)
+		pgtab = (Pte*)KADDR(PTE_ADDR(*pde));
+	else {
+		if (!create) {
+			return 0;
+		}
+		if ((r = page_alloc(&amp;pp)) &lt; 0) {
+			warn("pgdir_walk: could not allocate page for va %lx", va);
+			return r;
+		}
+		pp-&gt;pp_ref++;
+
+		pgtab = (Pte*)page2kva(pp);
+
+		// Make sure all those PTE_P bits are zero.
+		bzero(pgtab, BY2PG);
+
+		// The permissions here are overly generous, but they can
+		// be further restricted by the permissions in the page table 
+		// entries, if necessary.
+		*pde = page2pa(pp) | PTE_P | PTE_W | PTE_U;
+	}
+
+	*ppte = &amp;pgtab[PTX(va)];
+	return 0;
+}
+
+//
+// Map the physical page 'pp' at virtual address 'va'.
+// The permissions (the low 12 bits) of the page table
+//  entry should be set to 'perm|PTE_P'.
+//
+// Details
+//   - If there is already a page mapped at 'va', it is page_remove()d.
+//   - If necesary, on demand, allocates a page table and inserts it into 'pgdir'.
+//   - pp-&gt;pp_ref should be incremented if the insertion succeeds
+//
+// RETURNS: 
+//   0 on success
+//   -E_NO_MEM, if page table couldn't be allocated
+//
+// Hint: The TA solution is implemented using
+//   pgdir_walk() and and page_remove().
+//
+int
+page_insert(Pde *pgdir, struct Page *pp, u_long va, u_int perm) 
+{
+	int r;
+	Pte *pte;
+
+	if ((r = pgdir_walk(pgdir, va, 1, &amp;pte)) &lt; 0)
+		return r;
+
+	pp-&gt;pp_ref++;
+	if (*pte &amp; PTE_P)
+		page_remove(pgdir, va);
+
+	*pte = page2pa(pp) | perm | PTE_P;
+	return 0;
+}
+
+//
+// Return the page mapped at virtual address 'va'.
+// If ppte is not zero, then we store in it the address
+// of the pte for this page.  This is used by page_remove
+// but should not be used by other callers.
+//
+// Return 0 if there is no page mapped at va.
+//
+// Hint: the TA solution uses pgdir_walk and pa2page.
+//
+struct Page*
+page_lookup(Pde *pgdir, u_long va, Pte **ppte)
+{
+	int r;
+	Pte *pte;
+
+	if ((r = pgdir_walk(pgdir, va, 0, &pte)) < 0)
+		panic("pgdir_walk cannot fail now: %e", r);
+
+	if (pte == 0)
+		return 0;
+	if (ppte)
+		*ppte = pte;
+	if (!(*pte & PTE_P) || PPN(PTE_ADDR(*pte)) >= npage) {
+		warn("page_lookup: found bogus PTE 0x%08lx at pgdir %p va 0x%08lx",
+			*pte, pgdir, va);
+		return 0;
+	}
+
+	return pa2page(PTE_ADDR(*pte));
+}
+
+//
+// Unmaps the physical page at virtual address 'va'.
+//
+// Details:
+//   - The ref count on the physical page should decrement.
+//   - The physical page should be freed if the refcount reaches 0.
+//   - The pg table entry corresponding to 'va' should be set to 0.
+//     (if such a PTE exists)
+//   - The TLB must be invalidated if you remove an entry from
+//	   the pg dir/pg table.
+//
+// Hint: The TA solution is implemented using page_lookup,
+// 	tlb_invalidate, and page_decref.
+//
+void
+page_remove(Pde *pgdir, u_long va) 
+{
+	struct Page *p;
+	Pte *pte;
+
+	if ((p = page_lookup(pgdir, va, &pte)) == 0)
+		return;
+	*pte = 0;
+	tlb_invalidate(pgdir, va);
+	page_decref(p);
+}
+
+</pre>
+
+Questions:
+
+<ol>
+<li>
+The operating system cannot support more than 256MB of physical memory,
+because that is the size of the mapping from KERNBASE to 2^32.
+
+<li>
+The space overhead for managing memory is one Page structure per page,
+or 12 bytes per 4096.  For 256MB this would be 768 kB.  The page tables
+and page directories for the kernel take up approximately another 128kB,
+so about a megabyte total.
+</ol>
+
+<b>Exercise 3: Printf Potpourri</b>
+<p>
+The magic lines are:
+
+<pre>
+case 'o':
+	uq = getint(&ap, lflag, qflag);
+	base = 8;
+	goto number;
+</pre>
+
+Questions:
+<ol>
+<li>Console.c exports <code>cons_putc</code>, which printf uses.
+<li>When we have filled up the screen, that block of code scrolls
+the text on the screen up one line.
+<li><ul>
+	<li>Fmt points at format string "x %d, y %x, z %d\n".
+	Ap points just past the address of fmt on the stack.
+	<li><ul>
+		<li>cons_putc('x'), cons_putc(' ')
+		<li>va_arg(ap, int) -- before, ap points at the 1 on the stack; after, it points at the 3.
+		<li>ksprintn(1, 10, &tmp)
+		<li>cons_putc('1')
+		<li>cons_putc(',')
+		<li>cons_putc(' ')
+		<li>cons_putc('y')
+		<li>cons_putc(' ')
+		<li>va_arg(ap, int) -- before, ap points at the 3 on the stack; after, it points at the 4.
+		<li>ksprintn(3, 16, &tmp)
+		<li>cons_putc('3')
+		<li>cons_putc(',')
+		<li>cons_putc(' ')
+		<li>cons_putc('z')
+		<li>cons_putc(' ')
+		<li>va_arg(ap, int) -- before, ap points at the 4 on the stack; after, it points just past it
+		<li>ksprintn(4, 10, &tmp)
+		<li>cons_putc('4')
+		<li>cons_putc('\n')
+		</ul>
+	</ul>
+<li>The code prints "He110 World".
+		The "e110" is hex for 57616.  
+		The "rld" is the string interpretation of the integer 0x00646c72,
+			which is bytes "0x72 0x6c 0x64 0x00" or "rld\0" in memory.
+		If we were on a big-endian machine, we'd have to reverse the bytes in the word
+			to get "rld\0" in memory -- 0x726c6400.
+<li>The warn call will expect two arguments but only get one, so it will print
+		the next value on the stack, which is likely to be a temporary used by the calling function.
+<li>The easiest thing to do would be to change printf to take the format string as the <i>last</i>
+		argument rather than the first argument.  Failing that, an explicit pointer to the first argument
+		would have to be passed in order to find it.
+</ol>
+
+

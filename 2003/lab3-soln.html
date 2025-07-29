@@ -1,0 +1,502 @@
+<html>
+<head>
+<title>6.828 Fall 2003 Lab 3 SOLUTIONS: Preemptive Multitasking</title>
+</head>
+<body>
+<h2>6.828 Fall 2003 Lab 3</h2>
+<h1>Memory Management</h1>
+<p>
+<b>Exercise 1: Creating and Running Environments</b>
+<p>
+We used the following code.
+<pre>
+//
+// Marks all environments in 'envs' as free and inserts them into 
+// the env_free_list.  Insert in reverse order, so that
+// the first call to env_alloc() returns envs[0].
+//
+void
+env_init(void)
+{
+	int i;
+	LIST_INIT (&amp;env_free_list);
+	for (i = NENV - 1; i &gt;= 0; i--) {
+		envs[i].env_status = ENV_FREE;    
+		LIST_INSERT_HEAD (&amp;env_free_list, &amp;envs[i], env_link);
+	}
+}
+
+//
+// Initializes the kernel virtual memory layout for environment e.
+//
+// Allocates a page directory and initializes it.  Sets
+// e-&gt;env_cr3 and e-&gt;env_pgdir accordingly.
+//
+// RETURNS
+//   0 -- on sucess
+//   &lt;0 -- otherwise 
+//
+static int
+env_setup_vm(struct Env *e)
+{
+	// Hint:
+
+	int i, r;
+	struct Page *p = NULL;
+
+	// Allocate a page for the page directory
+	if ((r = page_alloc(&amp;p)) &lt; 0)
+		return r;
+
+	// Hint:
+	//    - The VA space of all envs is identical above UTOP
+	//      (except at VPT and UVPT) 
+	//    - Use boot_pgdir
+	//    - Do not make any calls to page_alloc 
+	//    - Note: pp_ref is not maintained for physical pages mapped above UTOP.
+
+	e-&gt;env_cr3 = page2pa(p);
+	e-&gt;env_pgdir = (Pde*)page2kva(p);
+	bzero(e-&gt;env_pgdir, BY2PG);
+
+	// The VA space of all envs is identical above UTOP...
+	static_assert(UTOP % PDMAP == 0);
+	for (i = PDX(UTOP); i &lt;= PDX(~0); i++)
+		e-&gt;env_pgdir[i] = boot_pgdir[i];
+
+
+	// ...except at VPT and UVPT.  These map the env's own page table
+	e-&gt;env_pgdir[PDX(VPT)]   = e-&gt;env_cr3 | PTE_P | PTE_W;
+	e-&gt;env_pgdir[PDX(UVPT)]  = e-&gt;env_cr3 | PTE_P | PTE_U;
+
+	return 0;
+}
+
+//
+// Allocates and initializes a new env.
+//
+// RETURNS
+//   0 -- on success, sets *new to point at the new env 
+//   &lt;0 -- on failure
+//
+int
+env_alloc(struct Env **new, u_int parent_id)
+{
+	...
+
+	e-&gt;env_tf.tf_eip = UTEXT + 0x20; // start right past a.out header
+
+	...
+}
+
+//
+// Set up the the initial stack and program binary for a user process.
+//
+// This function loads the complete binary image, including a.out header,
+// into the environment's user memory starting at virtual address UTEXT,
+// and maps one page for the program's initial stack
+// at virtual address USTACKTOP - BY2PG.
+// Since the a.out header from the binary is mapped at virtual address UTEXT,
+// the actual program text starts at virtual address UTEXT+0x20.
+//
+// This function does not allocate or clear the bss of the loaded program,
+// and all mappings are read/write including those of the text segment.
+//
+static void
+load_icode(struct Env *e, u_char *binary, u_int size)
+{
+	int i, r;
+	struct Page *p;
+
+	// Allocate and map physical pages
+	for (i = 0; i &lt; size; i += BY2PG) {
+		if ((r = page_alloc(&amp;p)) &lt; 0)
+			panic("load_icode: could not alloc page: %e\n", r);
+		bcopy(&amp;binary[i], (void*)page2kva(p), MIN(BY2PG, size - i));
+		if ((r = page_insert(e-&gt;env_pgdir, p, UTEXT + i,
+					PTE_P|PTE_W|PTE_U)) &lt; 0)
+			panic("load_icode: could not map page. Errno %d\n", r);
+	}
+
+	// Give it a stack
+	if ((r = page_alloc(&amp;p)) &lt; 0)
+		panic("load_icode: could not alloc page: %e\n", r);
+	if ((r = page_insert(e-&gt;env_pgdir, p, USTACKTOP - BY2PG,
+				PTE_P|PTE_W|PTE_U)) &lt; 0)
+		panic("load_icode: could not map page: %e\n", r);
+}
+
+//
+// Allocates a new env and loads the a.out binary into it.
+//  - new env's parent env id is 0
+void
+env_create(u_char *binary, int size)
+{
+	int r;
+	struct Env *e;
+	if ((r = env_alloc(&amp;e, 0)) &lt; 0)
+		panic("env_create: could not allocate env: %e\n", r);
+	load_icode(e, binary, size);
+}
+
+//
+// Context switch from curenv to env e.
+// Note: if this is the first call to env_run, curenv is NULL.
+//  (This function does not return.)
+//
+void
+env_run(struct Env *e)
+{
+	// save register state of currently executing env
+		// do nothing for now
+	curenv = e;
+	// restore e's address space
+	lcr3(e-&gt;env_cr3);
+	// restore e's register state
+	env_pop_tf(&amp;e-&gt;env_tf);
+}
+</pre>
+
+<p>
+
+<b>Exercise 2: Clock Interrupts</b>
+
+We used the following code.
+
+<pre>
+int
+env_alloc(struct Env **new, u_int parent_id)
+{
+	...
+
+	e-&gt;env_tf.tf_eflags = FL_IF; // interrupts enabled
+
+	...
+}
+
+void
+idt_init(void)
+{
+	...
+
+	SETGATE(idt[IRQ_OFFSET+0], 0, GD_KT, clock_interrupt, 0);
+
+	...
+}
+</pre>
+
+<p>
+
+<b>Exercise 3: Generalized Interrupt/Exception Handling</b>
+
+<p>
+
+We used the following code.
+
+<pre>
+/* CPU traps */
+IDTFNC_NOEC(Xdivide, T_DIVIDE)
+IDTFNC_NOEC(Xdebug,  T_DEBUG)
+IDTFNC_NOEC(Xnmi,    T_NMI)
+IDTFNC_NOEC(Xbrkpt,  T_BRKPT)
+IDTFNC_NOEC(Xoflow,  T_OFLOW)
+IDTFNC_NOEC(Xbound,  T_BOUND)
+IDTFNC_NOEC(Xillop,  T_ILLOP)
+IDTFNC_NOEC(Xdevice, T_DEVICE)
+IDTFNC     (Xdblflt, T_DBLFLT)
+IDTFNC     (Xtss,    T_TSS)
+IDTFNC     (Xsegnp,  T_SEGNP)
+IDTFNC     (Xstack,  T_STACK)
+IDTFNC     (Xgpflt,  T_GPFLT)
+IDTFNC     (Xpgflt,  T_PGFLT)
+IDTFNC_NOEC(Xfperr,  T_FPERR)
+IDTFNC     (Xalign,  T_ALIGN)
+IDTFNC_NOEC(Xmchk,   T_MCHK)
+/* the device interrupts */
+IDTFNC_NOEC(Xirq0,   IRQ_OFFSET+0)
+IDTFNC_NOEC(Xirq1,   IRQ_OFFSET+1)
+IDTFNC_NOEC(Xirq2,   IRQ_OFFSET+2)
+IDTFNC_NOEC(Xirq3,   IRQ_OFFSET+3)
+IDTFNC_NOEC(Xirq4,   IRQ_OFFSET+4)
+IDTFNC_NOEC(Xirq5,   IRQ_OFFSET+5)
+IDTFNC_NOEC(Xirq6,   IRQ_OFFSET+6)
+IDTFNC_NOEC(Xirq7,   IRQ_OFFSET+7)
+IDTFNC_NOEC(Xirq8,   IRQ_OFFSET+8)
+IDTFNC_NOEC(Xirq9,   IRQ_OFFSET+9)
+IDTFNC_NOEC(Xirq10,  IRQ_OFFSET+10)
+IDTFNC_NOEC(Xirq11,  IRQ_OFFSET+11)
+IDTFNC_NOEC(Xirq12,  IRQ_OFFSET+12)
+IDTFNC_NOEC(Xirq13,  IRQ_OFFSET+13)
+IDTFNC_NOEC(Xirq14,  IRQ_OFFSET+14)
+IDTFNC_NOEC(Xirq15,  IRQ_OFFSET+15)
+/* default handler -- not for any specific trap */
+IDTFNC     (Xdefault, T_DEFAULT)
+
+SUPERALIGN_TEXT
+.globl	_alltraps
+.type	_alltraps,@function
+_alltraps:
+	pushl   %ds		# build
+	pushl	%es		#  trap
+	pushal			#  frame
+	movl $GD_KD,%eax	# load
+	movw %ax,%ds		#  kernel
+	movw %ax,%es		#  segments
+	pushl %esp		# pass pointer to this trapframe 
+	call	_trap		#  and call trap
+	addl $0x4,%esp		# deallocate arg.
+	popal			# restore
+	popl %es		#  registers
+	popl %ds		#
+	addl $0x8,%esp		# skip trapno and errcode
+	iret			# go back..
+
+void
+idt_init(void)
+{
+	...
+	extern void
+		Xdivide,Xdebug,Xnmi,Xbrkpt,Xoflow,Xbound,
+		Xillop,Xdevice,Xdblflt,Xtss,Xsegnp,Xstack,
+		Xgpflt,Xpgflt,Xfperr,Xalign,Xmchk,Xdefault,
+		Xirq0,Xirq1,Xirq2,Xirq3,Xirq4,Xirq5,
+		Xirq6,Xirq7,Xirq8,Xirq9,Xirq10,Xirq11,
+		Xirq12,Xirq13,Xirq14,Xirq15,Xsyscall;
+
+	int i;
+
+	// install a default handler
+	for (i = 0; i &lt; sizeof(idt)/sizeof(idt[0]); i++)
+		SETGATE(idt[i], 0, GD_KT, &amp;Xdefault, 0);
+
+	SETGATE(idt[T_DIVIDE], 0, GD_KT, &amp;Xdivide, 0);
+	SETGATE(idt[T_DEBUG],  0, GD_KT, &amp;Xdebug,  0);
+	SETGATE(idt[T_NMI],    0, GD_KT, &amp;Xnmi,    0);
+	SETGATE(idt[T_BRKPT],  0, GD_KT, &amp;Xbrkpt,  3);
+	SETGATE(idt[T_OFLOW],  0, GD_KT, &amp;Xoflow,  0);
+	SETGATE(idt[T_BOUND],  0, GD_KT, &amp;Xbound,  0);
+	SETGATE(idt[T_ILLOP],  0, GD_KT, &amp;Xillop,  0);
+	SETGATE(idt[T_DEVICE], 0, GD_KT, &amp;Xdevice, 0);
+	SETGATE(idt[T_DBLFLT], 0, GD_KT, &amp;Xdblflt, 0);
+	SETGATE(idt[T_TSS],    0, GD_KT, &amp;Xtss,    0);
+	SETGATE(idt[T_SEGNP],  0, GD_KT, &amp;Xsegnp,  0);
+	SETGATE(idt[T_STACK],  0, GD_KT, &amp;Xstack,  0);
+	SETGATE(idt[T_GPFLT],  0, GD_KT, &amp;Xgpflt,  0);
+	SETGATE(idt[T_PGFLT],  0, GD_KT, &amp;Xpgflt,  0);
+	SETGATE(idt[T_FPERR],  0, GD_KT, &amp;Xfperr,  0);
+	SETGATE(idt[T_ALIGN],  0, GD_KT, &amp;Xalign,  0);
+	SETGATE(idt[T_MCHK],   0, GD_KT, &amp;Xmchk,   0);
+
+	SETGATE(idt[IRQ_OFFSET + 0], 0, GD_KT, &amp;Xirq0, 0);
+	SETGATE(idt[IRQ_OFFSET + 1], 0, GD_KT, &amp;Xirq1, 0);
+	SETGATE(idt[IRQ_OFFSET + 2], 0, GD_KT, &amp;Xirq2, 0);
+	SETGATE(idt[IRQ_OFFSET + 3], 0, GD_KT, &amp;Xirq3, 0);
+	SETGATE(idt[IRQ_OFFSET + 4], 0, GD_KT, &amp;Xirq4, 0);
+	SETGATE(idt[IRQ_OFFSET + 5], 0, GD_KT, &amp;Xirq5, 0);
+	SETGATE(idt[IRQ_OFFSET + 6], 0, GD_KT, &amp;Xirq6, 0);
+	SETGATE(idt[IRQ_OFFSET + 7], 0, GD_KT, &amp;Xirq7, 0);
+	SETGATE(idt[IRQ_OFFSET + 8], 0, GD_KT, &amp;Xirq8, 0);
+	SETGATE(idt[IRQ_OFFSET + 9], 0, GD_KT, &amp;Xirq9, 0);
+	SETGATE(idt[IRQ_OFFSET + 10], 0, GD_KT, &amp;Xirq10, 0);
+	SETGATE(idt[IRQ_OFFSET + 11], 0, GD_KT, &amp;Xirq11, 0);
+	SETGATE(idt[IRQ_OFFSET + 12], 0, GD_KT, &amp;Xirq12, 0);
+	SETGATE(idt[IRQ_OFFSET + 13], 0, GD_KT, &amp;Xirq13, 0);
+	SETGATE(idt[IRQ_OFFSET + 14], 0, GD_KT, &amp;Xirq14, 0);
+	SETGATE(idt[IRQ_OFFSET + 15], 0, GD_KT, &amp;Xirq15, 0);
+
+	...
+}
+
+void
+trap(struct Trapframe *tf)
+{
+	// print_trapframe(tf);
+	if (tf-&gt;tf_trapno == IRQ_OFFSET+0) {
+		// irq 0 -- clock interrupt
+		clock();
+	}
+	if (IRQ_OFFSET &lt;= tf-&gt;tf_trapno 
+			&amp;&amp; tf-&gt;tf_trapno &lt; IRQ_OFFSET+MAX_IRQS) {
+		// just ingore spurious interrupts
+		printf("spurious interrupt on irq %d\n",
+			tf-&gt;tf_trapno - IRQ_OFFSET);
+		print_trapframe(tf);
+		return;
+	}
+
+	// the user process or the kernel has a bug.
+	print_trapframe(tf);
+	if (tf-&gt;tf_cs == GD_KT)
+		panic("unhandled trap in kernel");
+	else {
+		env_destroy(curenv);
+		return;
+	}
+}
+
+</pre>
+
+An alternative method, hinted at by the challenge problem, is this code.
+
+<pre>
+
+/* For certain traps the CPU automatically pushes an error code, for
+ * all other traps the HANDLER_NO_ECODE() pushes a 0 in place of the error code,
+ * so the trap frame has the same format.
+ */
+#define HANDLER(num) \
+	.text; \
+	.globl handler ## num; \
+	handler ## num: \
+		pushl $0; \
+		pushl $(num); \
+		jmp _trapmain; \
+	.data; \
+		.long handler ## num; \
+	.text; \
+
+#define HANDLER_WITH_ECODE(num); \
+	.text; \
+	.globl handler ## num; \
+	handler ## num: \
+		pushl $(num); \
+		jmp _trapmain; \
+	.data; \
+		.long handler ## num; \
+	.text; \
+
+.data
+.globl  _handlers
+_handlers:
+
+HANDLER(0)
+HANDLER(1)
+HANDLER(2)
+HANDLER(3)
+HANDLER(4)
+HANDLER(5)
+HANDLER(6)
+HANDLER(7)
+HANDLER_WITH_ECODE(8)
+HANDLER(9)
+HANDLER_WITH_ECODE(10)
+HANDLER_WITH_ECODE(11)
+HANDLER_WITH_ECODE(12)
+HANDLER_WITH_ECODE(13)
+HANDLER_WITH_ECODE(14)
+HANDLER(15)
+HANDLER(16)
+HANDLER_WITH_ECODE(17)
+HANDLER(18)
+HANDLER(19)
+HANDLER(20)
+HANDLER(21)
+HANDLER(22)
+HANDLER(23)
+HANDLER(24)
+HANDLER(25)
+HANDLER(26)
+HANDLER(27)
+HANDLER(28)
+HANDLER(29)
+HANDLER(30)
+HANDLER(31)
+HANDLER(32)
+HANDLER(33)
+HANDLER(34)
+HANDLER(35)
+HANDLER(36)
+HANDLER(37)
+HANDLER(38)
+HANDLER(39)
+HANDLER(40)
+HANDLER(41)
+HANDLER(42)
+HANDLER(43)
+HANDLER(44)
+HANDLER(45)
+HANDLER(46)
+HANDLER(47)
+
+.text
+
+_trapmain:
+	pushl   %ds
+	pushl   %es
+	pushal
+	movw    $GD_KD, %ax
+	movw    %ax, %ds
+	movw    %ax, %es
+	pushl   %esp    # arg to trap
+	call    _trap
+	popl	    %eax    # arg to trap
+	popal
+	popl	    %es
+	popl	    %ds
+	addl	    $8, %esp	# trap number and error code
+	iret
+
+void
+idt_init(void)
+{
+	...
+
+	int i;
+	extern void (*handlers[])(void);
+
+	for (i=0; i&lt;48; i++)
+		SETGATE(idt[i], 0, GD_KT, handlers[i], 0);
+
+	...
+}
+</pre>
+
+<p>
+
+<b>Exercise 4: Pre-emptive multitasking</b>
+
+<p>
+
+We used the following code.
+<pre>
+void
+trap(struct Trapframe *tf)
+{
+	...
+
+	if (tf-&gt;tf_trapno == IRQ_OFFSET+0) {
+		// irq 0 -- clock interrupt
+		sched_yield();
+	}
+	...
+}
+
+void
+env_run(struct Env *e)
+{
+	// save register state of currently executing env
+	if (curenv)
+		curenv-&gt;env_tf = *UTF;
+	curenv = e;
+	// restore e's address space
+	lcr3(e-&gt;env_cr3);
+	// restore e's register state
+	env_pop_tf(&amp;e-&gt;env_tf);
+}
+
+void
+sched_yield(void)
+{
+	int i, j;
+
+	if (curenv)
+		i = curenv-envs;
+	else
+		i = NENV-1;
+	for (j=1; j&lt;=NENV; j++)
+		if(envs[(j+i)%NENV].env_status == ENV_RUNNABLE)
+			env_run(&amp;envs[(j+i)%NENV]);
+	panic("no runnable envs");
+}
+</pre>
+

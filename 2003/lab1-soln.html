@@ -1,0 +1,81 @@
+<html>
+<head>
+<title>6.828 Fall 2003 Lab 1 SOLUTIONS: PC Bootstrap and GCC Calling Conventions</title>
+</head>
+<body>
+<h2>6.828 Fall 2003 Lab 1</h2>
+<h1>PC Bootstrap and Calling Conventions</h1>
+<p>
+<b>Bootstrap</b>
+<p>
+When paging is turned off, the segmentation hardware uses the equation
+<pre>
+    physical = linear = virtual + segment_offset
+</pre>
+to translate the address.  Solving for <code>segment_offset</code> we get that
+<pre>
+    segment_offset = physical - virtual
+</pre>
+and since we want physical address 0 to correspond to the beginning of the kernel image,
+we can just use
+<pre>
+    segment_offset = -(hdr->a_entry&0xFF000000)
+</pre>
+Finally, since the segments are already set up with a zero offset
+and since we're only changing the top 8 bits, this suffices:
+<pre>
+    cseg[1] |= -(hdr->a_entry&0xFF000000);
+    dseg[1] |= -(hdr->a_entry&0xFF000000);
+</pre>
+
+<p>
+
+<h1>Setjmp and longjmp</h1>
+
+Here they are.  The code follows the comment skeleton exactly.
+Note that we're not bound to use the standard C prologue and epilogue.
+They're not part of the gcc calling convention contract,
+and it turns out to be easier to ignore it:
+as long as we put the callee-save registers back the way we found them, anything goes.
+
+<pre>
+.code32
+.globl _setjmp828, _longjmp828, setjmp828, longjmp828
+
+setjmp828:
+_setjmp828:
+	# Get env, which is function argument 1.  Copy it into a register.
+	movl 4(%esp), %ecx
+	# Copy %ebp into env->ebp
+	movl %ebp, 0(%ecx)
+	# Copy %ebx into env->ebx
+	movl %ebx, 4(%ecx)
+	# Copy %esi into env->esi
+	movl %esi, 8(%ecx)
+	# Copy %edi into env->edi
+	movl %edi, 12(%ecx)
+	# Copy %esp into env->esp
+	movl %esp, 16(%ecx)
+	# Copy the return address into %ret
+	movl 0(%esp), %eax
+	movl %eax, 20(%ecx)
+	# Return 0
+	xorl %eax, %eax
+	ret
+
+longjmp828:
+_longjmp828:
+	# You are on your own. 
+	# Reconstruct the state you had in _setjmp828.
+	movl 4(%esp), %ecx
+	movl 8(%esp), %eax
+	movl 0(%ecx), %ebp
+	movl 4(%ecx), %ebx
+	movl 8(%ecx), %esi
+	movl 12(%ecx), %edi
+	movl 16(%ecx), %esp
+	movl 20(%ecx), %ecx
+	movl %ecx, 0(%esp)
+	ret
+</pre>
+

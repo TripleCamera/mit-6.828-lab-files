@@ -1,0 +1,847 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<html>
+<head>
+<title>Lab 3: Pre-emptive Multitasking</title>
+</head>
+<body>
+
+<h2>6.828 Fall 2003 Lab 3</h2>
+
+<p>
+<b>Handed out Wednesday, October 1, 2003<br>
+Due Thursday, October 16, 2003</b>
+
+<h1>1. Introduction</h1>
+
+<p>
+In this lab, you will also write the code for environment creation and
+scheduling.  In order to pre-empt running environments, you'll be
+required to support clock interrupts.
+</p>
+
+<p>
+<i>
+In this lab, the terms environment and process are
+interchangeable--they have roughly the same meaning.  We introduce the
+term environment to stress the point that environments do not provide
+the same semantics as UNIX processes.
+</i>
+</p>
+
+
+<h1>2. Background: Environments</h1>
+
+This section will give you an overview of the environment code.  You
+should consider this a specification which you'll implement for
+exercise 1.
+
+
+<h2>Env management</h2>
+
+<p>
+In lab 2, you allocated memory for the <code>envs[]</code> array.
+This NENV sized array holds the state of all the possible
+environments.  This means your OS cannot run more than NENV concurrent
+environments. If an attempt is made to create more than NENV
+environments, the system will return an <code>E_NO_FREE_ENV</code>
+error.
+</p>
+
+<p>
+Typically, your OS will be running many fewer environments.  The
+remaining environments should be inserted on to the
+<code>env_free_list</code>.  This supports efficient allocation and
+deallocation of environments, as they just have to be added to/removed
+from the free list.
+</p>
+
+<p>
+The kernel also maintains <code>curenv</code>, which points to the
+currently executing environment.  During boot up, before the first
+environment is run, this pointer is set to <code>NULL</code>.
+</p>
+
+
+<pre>
+From env.c:
+
+struct Env *envs = NULL;		/* All environments */
+struct Env *curenv = NULL;	        /* the current env */
+static struct Env_list env_free_list;	/* Free list */
+</pre>
+
+
+<h2>Env state</h2>
+
+
+The figure below shows the state kept by the kernel for each
+environment.
+
+<ul>
+<li><b>env_tf</b> -- the register values for the
+environment (see <code>trap.h</code>).  The kernel saves these when
+switching from user to kernel mode, so that the environment can be resumed.
+
+<li><b>env_link</b> -- pointer which allows the env to be placed on
+the <code>env_free_list</code>.  (see <code>queue.h</code> for details)
+
+<li><b>env_id</b> -- unique identifier
+
+<li><b>env_parent_id</b> -- env_id of the environment which created
+this environment.
+
+<li><b>env_status</b> -- one of <code>ENV_FREE, ENV_RUNNABLE, ENV_NOT_RUNNABLE</code>
+
+<li><b>env_pgdir</b> -- virtual address of this env's page directory
+
+<li><b>env_cr3</b> -- physical address of this env's page directory
+
+<li><b>remaining fields used in future labs</b>
+</ul>
+<pre>
+From env.h:
+
+struct Env {
+  struct Trapframe env_tf;
+  LIST_ENTRY(Env) env_link;
+  u_int env_id;
+  u_int env_parent_id;
+  u_int env_status;
+  Pde  *env_pgdir;
+  u_int env_cr3;
+
+  /* (below here: not used in lab 3) */
+  u_int env_ipc_value;            /* IPC state */
+  u_int env_ipc_from;
+  u_int env_ipc_blocked;
+
+  u_int env_pgfault_handler;      /* user page fault handler */
+};
+</pre>
+
+<p>
+Like a process, an environment couples the concepts of thread and address space.
+The thread is defined by the registers (the <code>env_tf</code> field),
+and the address space is defined by the linear address mapping in <code>env_pgdir</code>
+and <code>env_cr3</code>.
+To run an environment, the kernel must restore both the registers and the address space.
+</p>
+
+<p>
+Our <code>struct Env</code> is analogous to <code>struct user</code> in V6
+UNIX.  The key difference between the two is that
+<code>struct Env</code> holds the environment's (i.e., process's)
+user-mode register state within the <code>env_tf</code> substructure.
+In V6, this saved user-mode register state
+is stored on the process's kernel stack
+whenever the CPU is executing kernel code.
+While in V6 UNIX each process's "user segment"
+starts with a <code>struct user</code>,
+the process's kernel stack is not part of <code>struct user</code> itself
+but is located immediately <i>above</i> this structure.
+
+<p>
+In our x86-based operating system,
+individual environments do not have their own kernel stacks;
+instead, all kernel code runs on a single kernel stack
+and the kernel saves user-mode register state explicitly
+in each environment's <code>struct Env</code>
+rather than implicitly on the kernel stack.
+</p>
+
+<h1>3. Background: Interrupts and Exceptions</h1>
+
+The follow sections highlight a few key concepts and mechanisms.  At
+first read, the connection between them might not be clear.  However,
+the coding exercises should show you how all the pieces fit together.
+
+
+<h2>Terminology</h2>
+
+<p>
+This lab adopts the terminology defined in <a
+href="../readings/intelv3.pdf">IA-32 Intel Architecture Software
+Developer's Manual, Volume 3: System programming guide</a>.  However,
+be aware that terms such as exceptions, traps, interrupts, faults and
+aborts have no standardized meaning.  When you see these terms outside
+of this lab, the meanings might be slightly different.
+</p>
+
+<p>
+You should read chapter 5 of the above reference (sections 5.7, 5.8.2,
+5.8.3, 5.9 and 5.12.2 are not particularly relevant).
+</p>
+
+
+<h2>Interrupt discipline</h2>
+
+<p>
+In your operating system, you will make a key simplification compared
+to V6 UNIX.  External (ie. device) interrupts are always disabled when
+in the kernel and always enabled when in user space.  External
+interrupts are controlled by the <code>FL_IF (see mmu.h)</code> bit of
+the <code>%eflags</code> register.  When this bit is set, external
+interrupts are enabled. While the bit can be modified in several ways,
+because of our simplification, we will handle it solely through the
+<code>%eflags</code> register.
+</p>
+
+<p>
+You will have to ensure that the <code>FL_IF</code> flag is set in
+user processes when they run so that when an interrupt arrives, it
+gets passed through to the processor and handled by your interrupt
+code. Otherwise, it will be masked: this is the case when the
+processor is reset. 
+</p>
+
+<h2>Interrupt Mapping</h2>
+
+<p>
+The interrupt descriptor table (IDT) tells the processor how to
+handle each possible interrupt.
+The internal processor exceptions map to IDT entries 0-31.
+For example, the information about the page fault handler is in entry 14.
+When a page fault occurs, the
+processor transfers control to the <code>CS:EIP</code> defined in
+<code>IDT[14]</code>.  These values define the address of the kernel's
+page fault handler routine.
+</p>
+
+<p>
+External interrupts (i.e., device interrupts) are refered as IRQs.
+There are 16 possible IRQs, numbered 0 through 15.
+The mapping from IRQ number to IDT entry is not fixed.
+<code>Pic_init</code> in <code>picirq.c</code> maps IRQs 0-15
+to interrupts <code>IRQ_OFFSET</code> through <code>IRQ_OFFSET+15</code>.
+
+<p>In picirq.h <code>IRQ_OFFSET</code> is defined to be decimal 32.
+Thus the IDT entries 32-44 correspond to the IRQs 0-15.  For example,
+the clock interrupt is IRQ 0.  Thus, IDT[32] contains the address of
+the clock's interrupt handler routine.
+</p>
+
+<p>
+The <code>IRQ_OFFSET</code> is chosen so that the device interrupts
+don't overlap with the processor exceptions.
+</p>
+
+
+<h2>Stack switching -- the TSS</h2>
+
+<p>
+When kernel executes an instruction which generates an exception
+(e.g., the kernel divides by zero, deferences a NULL pointer, etc),
+the processor pushes exception parameters on the current stack.  If
+there was ever not enough space on the stack, the CPU would reset
+itself.
+</p>
+
+<p>
+When a user process is executing and an exception/interrupt
+occurs, the processor does not push the parameters on the current
+stack, but rather it switches to the stack defined by the SS0 and ESP0
+fields of the TSS (see <code>idt_init()</code> in
+<code>trap.c</code>).  The OS should always guarantee that these are
+valid addresses, so that the exception can be handled.
+</p>
+
+<h2>An Example</h2>
+
+Let's put these pieces together and trace through an example.  Let's
+say a user process is running in a loop, when a clock interrupt
+occurs.
+
+<ol>
+
+
+<li> The processor switches to the stack defined by the TSS
+SS0 (GD_KD) and ESP0 (KSTACKTOP).  
+
+<li> The processor pushes the exception parameters on the
+kernel stack, starting at addresss KSTACKTOP:
+<pre>
+                     +--------------------+ KSTACKTOP             
+                     | 0x00000   old SS   |     " - 4
+                     |      old ESP       |     " - 8
+                     |     old EFLAGS     |     " - 12
+                     | 0x00000 | old CS   |     " - 16
+                     |      old EIP       |     " - 20 <---- %esp 
+                     +--------------------+             
+</pre>
+<!-- " -->
+
+<li>
+Because we're handling IRQ 0, the clock interrupt, the
+processor reads IDT entry IRQ_OFFSET+0 andsets
+<code>%cs:%eip</code> to the handler function defined there.
+to the handler function defined there.
+
+<li> The handler function takes control and can handle the
+exception/interrupt.
+
+</ol>
+
+
+<h1>4. Getting Started</h1>
+
+<p>
+Download our reference code for lab 3 from
+<a href="http://pdos.lcs.mit.edu/6.828/labs/lab3.tar.gz">
+http://pdos.lcs.mit.edu/6.828/labs/lab3.tar.gz</a>,
+and untar it into your 6.828 directory as before.
+You will then need to merge the changes
+between our lab 2 and lab 3 source code trees
+into your own kernel code resulting from completing lab 2.
+As we mentioned before,
+the <code>diff</code> and <code>patch</code> utilities
+can be very useful for this purpose,
+as well as their "big brother" <code>cvs</code>.
+
+<p>
+Lab 3 contains the following new source files,
+which you should browse through as your merge them into your kernel:
+<ul>
+<li>	<tt>kern/env.c</tt>
+<li>	<tt>kern/sched.c</tt>
+<li>	<tt>kern/sched.h</tt>
+<li>	<tt>kern/trap.c</tt>
+<li>	<tt>kern/trap.h</tt>
+<li>	<tt>kern/picirq.c</tt>
+<li>	<tt>kern/lab3.S</tt>
+</ul>
+
+In addition, a number of the source files we handed out for lab2
+are modified in lab3.
+To see the differences, you can type:
+
+<pre>
+$ <b>diff -ur lab2 lab3</b>
+</pre>
+
+You can try using the <tt>patch</tt> command
+to incorporate these changes into your source tree automatically.
+But <i>back up your source tree</i> before you try this!!!
+The <tt>patch</tt> command usually does a fairly good job
+but is not infallible;
+it can occasionally insert patches in the wrong place.
+Be sure you check the resulting source files to make sure they look right.
+Additionally, if one of our changes between lab2 and lab3
+is textually overlapping or just too close
+in a single source file to one of your changes,
+<tt>patch</tt> will report a conflict
+and write the (unmerged) patch to a separate file in the directory,
+leaving you to merge that change manually.
+For example:
+
+<pre>
+$ <b>diff -ur lab2 lab3 >lab2-3.pch</b>
+$ <b>cp -r mysrc mysrc-backup</b>
+$ <b>cd mysrc</b>
+$ <b>patch -p1 <../lab2-3.pch</b>
+</pre>
+
+<h2>Debugging tips</h2>
+
+For all its faults, <code>bochs</code> is still a much more 
+hospitable debugging environment than a real processor.
+Put it to work for you!  
+
+<ul>
+<li>If you include <code>kern/bochs.h</code>, then you can call
+the pseudo-function <code>bochs()</code> to cause Bochs to stop
+executing your kernel and return to the debug prompt.
+This is useful for setting long-lived "breakpoints", or for stopping
+your program after a tricky section of code so that you can inspect its work before
+letting it continue.
+
+<li>The command <code>info idt</code> will print the current IDT.
+This is useful for checking whether you set it up correctly.
+
+<li>The <code>vb</code> command sets a breakpoint at a particular %cs:%eip address.
+Since the kernel code segment selector is 8, <code>vb 8:0xf0101234</code>
+sets a breakpoint at the given kernel address.
+Similarly, since the user segment selector is 0x1b, <code>vb 0x1b:0x80020</code>
+sets a breakpoint at the given user address.
+
+</ul>
+
+Finally, note that passing all the <code>gmake grade</code> tests
+does not mean your code is perfect.  It may have subtle bugs that will
+only be tickled by future labs.
+In a perfect world, <code>gmake grade</code> would find all your bugs,
+but no one builds operating systems
+in a perfect world anyway.  Keep in mind that debugging an operating system is a 
+very holistic task -- there are abstraction boundaries, but you
+can't necessarily place much trust in them since nothing is really
+enforcing them.  If you get all sorts of weird crashes
+that don't seem to be explainable by a single bug in the layer you're
+working on, it's likely that they're explainable by a single bug in
+a different layer.
+
+<h2>Inline Assembly</h2>
+
+In this lab you may find GCC's inline assembly language feature useful,
+although it is also possible to complete the lab without using it.
+At the very least, you will need to be able to understand
+the fragments of inline assembly language ("asm" statements)
+that already exist in the source code we gave you.
+For the "definitive" reference to GCC inline assembly language,
+type <tt>info gcc</tt>, select the "C Extensions" chapter,
+and then the "Extended Asm" section.
+Other links you might find useful:
+
+<ul>
+<li>	<a href="http://www.cs.princeton.edu/courses/archive/fall99/cs318/Files/djgpp.html">Brennan's Guide to Inline Assembly</a>
+<li>	<a href="http://cs.wwc.edu/~aabyan/215/inline.html">x86 Inline Assembly Programming</a>
+<li>	<a href="http://www-106.ibm.com/developerworks/linux/library/l-ia.html">
+Inline assembly for x86 in Linux</a>
+</ul>
+
+<h1>5. Hand-in Procedure</h1>
+
+<p>
+As before,
+you can test your code against our test scripts
+by running <code>gmake grade</code>.
+When you are done,
+run <code>gmake handin</code> to tar up and hand in your source tree.
+You should get an automatic e-mail confirmation shortly thereafter.
+</p>
+
+
+<h1>6. Exercises</h1>
+
+<h2>Exercise 1: Creating and Running Environments</h2>
+
+<p>
+In this exercise you will write the code necessary to run a user
+process (i.e., a <code>struct Env</code>). Because we do not yet have
+a filesystem, we will set up the kernel to load a static binary image
+much like V6 does with <code>icode</code>.
+However, there are some functions that will
+need to be completed before this process can run.
+</p>
+
+<p>
+In the file <code>env.c</code>, finish coding the following functions:
+</p>
+<pre>
+env_init()
+env_setup_vm()
+env_alloc() -- you just need to set the tf_eip field
+load_icode()
+env_create()
+env_run()
+</pre>
+
+As you write these, you might find the new printf verb <code>%e</code>
+useful -- it prints a description corresponding to an error code.
+For example, 
+<pre>
+    r = -E_NO_MEM;
+    panic("env_alloc: %e", r);
+</pre>
+will panic with the message "env_alloc: out of memory".
+<p>
+
+Once you are done you should compile your kernel and run it under
+Bochs (remember that <code>bochs-nogui</code> doesn't require X11).
+You should see:
+<pre>
+...
+  Setup timer interrupts via 8259A
+  unmasked timer interrupt
+</pre>
+
+If you see this type Control-c into the Bochs debugger, then single
+step a couple of time.  What you should see is listed below.  Note that
+the t=??????? values will be different for you.
+
+<pre>
+Next at t=0
+(0) f000:fff0: e968e0: jmp +#e068
+<bochs:1> c
+Next at t=9355127
+(0) 001b:00800020 (unknown context): ebfe: jmp +#fe
+<bochs:2> s
+Next at t=9355128
+(0) 001b:00800020 (unknown context): ebfe: jmp +#fe
+<bochs:3> 
+Next at t=9355129
+(0) 001b:00800020 (unknown context): ebfe: jmp +#fe
+<bochs:4> 
+Next at t=9355130
+(0) 001b:00800020 (unknown context): ebfe: jmp +#fe
+<bochs:5> 
+</pre>
+
+<p>
+If you don't see this output, then you've made a coding mistake.  Fix
+it before continuing.
+</p>
+
+Below is a call graph of the code up to the point where the user
+code is invoked. 
+Make sure you understand the purpose of each step.
+    <ul> 
+    <li> <code>start</code> (<code>locore.S</code>)
+    <li> <code>i386_init</code>
+        <ul> 
+        <li> <code>cons_init</code>
+        <li> <code>i386_detect_memory</code>
+        <li> <code>i386_vm_init</code>
+        <li> <code>ppage_init</code>
+        <li> <code>idt_init</code>
+        <li> <code>pic_init</code>
+        <li> <code>kclock_init</code>
+        <li> <code>env_init</code>
+        <li> <code>env_create</code>
+        <li> <code>sched_yield</code>
+            <ul>
+            <li> <code>env_run</code>
+                <ul>
+                <li> <code>env_pop_tf</code>
+                </ul>
+            </ul>
+        </ul>
+    </ul>
+</pre>
+
+
+<h2>Exercise 2: Clock Interrupts</h2>
+
+<p>
+In exercise 1, after the environment was started (with
+<code>env_run()</code>), it just spun in a loop.  The kernel never got
+control back.  We need to generate and handle clock interrupts.
+Interrupts will force control back to the kernel.  In a later lab, we
+will also add system calls, with which a user program can ask the
+processor to transfer control to the kernel.
+</p>
+
+<p>
+The calls to <code>pic_init</code> and <code>kclock_init</code>
+(from <code>i386_init</code> in <code>init.c</code>) set up the
+clock and the interrupt controller to generate interrupts.  However,
+the user env is not interrupted because the CPU is ignoring device
+interrupts.  You need to correct this.  Modify the code in
+<code>env_alloc()</code> so that user environments are run with
+interrupts enabled.
+</p>
+
+<p>
+You might want to re-read sections 5.8 and 5.8.1 of <a
+href="../readings/intelv3.pdf">IA-32 Intel Architecture Software
+Developer's Manual, Volume 3: System programming guide</a> at this
+time.
+</p>
+
+<p>
+Next, you need to setup the IDT and interrupt handler.  The handler
+has been written for you (see <code>clock_interrupt</code> in
+<code>locore.S</code>.  You should edit <code>idt_init</code> in
+<code>trap.c</code> at this time.  Use the <code>SETGATE</code> macro to set
+the IDT entry corresponding to the clock interrupt.
+Note that in order to obtain a useful C symbol, you can add the declaration
+<code>
+    extern void clock_interrupt(void);
+</code>
+to your program.
+</p>
+
+<p>
+Once you are done coding, compile and run your kernel.  If you see
+asterisks print out one after another you can continue.  
+</p>
+
+Make sure you can answer the following questions:
+
+<ol>
+<li> How many instruction of user code are executed between each
+interrupt?  
+
+<li> How many instruction of kernel code are executed to handle the
+interrupt?
+
+<p>
+Hint: use the <code>vb</code> command mentioned earlier.
+</p>
+
+<p>
+When using objdump to dump the kernel pass
+<code>--adjust-vma=0xf00ff000</code>.  <i>It's not clear why this is
+required, <code>--adjust-vma=0xf0100020</code> would seem more
+logical, but nevertheless it is.</i>
+</p>
+
+
+</ol>
+
+<h2>Exercise 3: Generalized interrupt/exception handling</h2>
+
+<p>
+In this exercise, you will set up the IDT to handle all the
+interrupts and exceptions that we expect to see.
+Although 256 interrupts/exceptions are possible, your code only needs
+to handle interrupts 0-31 (the processor exceptions)
+and interrupts 32-47 (the device IRQs).
+We may add additional interrupts later.
+
+<p>
+The header files <tt>kern/picirq.h</tt>, <tt>kern/trap.h</tt>,
+and <tt>inc/trap.h</tt>
+contain important definitions related to interrupts and exceptions
+that you will need to become familiar with.
+The file <tt>kern/trap.h</tt> contains trap-related definitions
+that will remain strictly private to the kernel,
+while the companion header file <tt>inc/trap.h</tt>
+contains general definitions that may also be useful
+to user-level programs and libraries in the system.
+</p>
+
+<p>
+Note: Some of the exceptions in the range 0-31 are defined by Intel to be
+reserved.  Since they will never be generated, it doesn't really
+matter how you handle them.  Do whatever you think is cleanest.
+</p>
+
+<p>
+The overall flow of control that you should achieve is depicted below: 
+</p>
+
+<pre>
+      IDT                   locore.S               trap.c
+   
++----------------+                        
+|   &handler1    |---------> handler1:          trap (struct Trapframe *tf)
+|                |             // do stuff      {
+|                |             call _trap          // handle the exception/interrupt
+|                |             // undo stuff    }
++----------------+
+|   &handler2    |--------> handler2:
+|                |            // do stuff
+|                |            call _trap
+|                |            // undo stuff
++----------------+
+       .
+       .
+       .
++----------------+
+|   &handlerX    |--------> handlerX:
+|                |             // do stuff
+|                |             call _trap
+|                |             // undo stuff
++----------------+
+</pre>
+
+<p>
+Each exception or interrupt has its own handler in
+<code>locore.S</code> and the IDT is initialized with the address of these
+handlers.  Each of the handlers should build a <code>struct
+Trapframe</code> (see <code>trap.h</code>) on the stack and call into
+<code>trap()</code> (in <code>trap.c</code>) with a pointer to the
+Trapframe.
+</p>
+
+<p>
+Even the clock interrupt should fit into this model.  This means
+you will no longer be using the <code>clock_interrupt</code> handler.
+</p>
+
+<p>
+After control is passed to <code>trap()</code>, that function handles the
+exception/interrupt or dispatches the exception/interrupt to a specific
+handler function.
+</p>
+
+<ol>
+<p>
+<li>
+Edit <code>locore.S</code> and <code>trap.c</code> and implement
+what has been described above.  The macros <code>IDTFNC</code> and
+<code>IDTFNC_NOEC</code> in <code>locore.S</code> should help you, as
+well as the T_* defines in <code>trap.h</code>.
+</p>
+
+<p>
+You can use the code from <code>_clock_interrupt</code> as a starting
+point, but remember that the code must be modified to build a
+<code>struct Trapframe</code>.  
+<p>
+Hint: you code should perform the following steps:
+<ol>
+<li>push values on the stack in the order defined by struct Trapframe
+<li>load GD_KD into %ds and %es
+<li>pushl %esp  -- pass pointer to Trapframe which is built on the stack
+<li>call _trap
+<li>pop the values pushed in steps 1-3
+<li>iret
+</ol>
+
+Consider using the <code>pushal</code> and <code>popal</code>
+instructions; they fit nicely with the layout of the <code>struct
+Trapframe</code>.
+</p>
+
+
+<li>
+<p>
+In the <code>trap</code> function, dispatch clock interrupts to the
+<code>clock</code> function.  Run your kernel.  You should see the
+asterisks, as you did in the previous exercise.  Do not continue until
+you see this.
+<p>
+If you get stuck, remember the debugging tips given earlier.
+</p>
+
+
+<li>
+<p>
+The trap handling is going to help you clean up after errant user envs.
+<code>lab3.S</code> contains a number of test cases which simulate
+what an errant user env might execute.
+</p>
+
+<p>
+To configure your code for a test case edit the following line
+from <code>i386_init</code>:
+<pre>
+    env_create(&spin_start, &spin_end - &spin_start);
+</pre>
+Replace
+<code>spin_start</code>
+and
+<code>spin_end</code> 
+with the analogous names for the test case. You'll also need to
+ declare the symbols for the test case, of course.
+</p>
+
+<p>
+Then, recompile and boot your kernel.  In trap(), you should
+call <code>env_destroy()</code> to cleanup after the errant
+environment.  You should expect the following assert in
+<code>yield</code> to fire:
+<pre>
+  assert(envs[0].env_status == ENV_RUNNABLE);
+</pre>
+</p>
+Make sure your kernel passes all of the test cases.
+</ol>
+Make sure you can answer these questions:
+<ol>
+
+<li> How do you know when you pass a test case?  What output did you
+see and why?
+
+<li> The break point test case will either generate a break point
+exception of a general protect fault depending on how you initialized
+the break point entry in the idt (i.e., your call to
+<code>SETGATE</code> from <code>idt_init</code>). 
+Which did you see?  Change your code to generate the other.
+
+<li> What do you think is the point of these mechanisms? (hint:
+consider what would happen if the user code executed "int $0x20")
+
+<li> What is the purpose of having an individual handler function for
+each exception/interrupt?  (i.e., if all exceptions/interrupts were
+delivered to the same handler, what functionality that exists in
+the current implementation could not be provided?)
+
+</ol>
+
+<i>Challenge!!!</i>
+You probably have a lot of very similar code right now, between the lists of 
+<code>IDTFNC</code> in <code>locore.S</code> and their installations in <code>trap.c</code>.
+Clean this up.  Change the macros in <code>locore.S</code> to automatically
+generate a table for <code>trap.c</code> to use.
+(Note that you can switch between laying down code and data in the assembler by
+using the directives <code>.text</code> and <code>.data</code>.)
+
+<h2>Exercise 4: Pre-emptive Mulitasking</h2>
+
+<p>
+In this exercise you'll create a second env and use the clock
+interrupt to switch between the two envs.
+</p>
+
+<ol>
+<li>Edit <code>i386_init()</code>.  Replace the line that says:
+<pre>
+    env_create(&spin_start, &spin_end - &spin_start);
+</pre>
+with
+<pre>
+    env_create(&alice_start, &alice_end - &alice_start);
+    env_create(&bob_start, &bob_end - &bob_start);
+</pre>
+(Again, you will need to declare the appropriate symbols.)  Now,
+<code>envs[0]</code> will correspond to the "alice" code and
+<code>envs[1]</code> to the "bob" code.
+
+<li> Edit <code>trap()</code> so that when a clock interrrupt occurs,
+<code>sched_yield() </code> is called.
+
+<li> Open <code>sched.c</code> and rewrite the function
+<code>sched_yield()</code>.  You should rewrite it to be a round-robin
+scheduler, which loops over the envs in <code>envs[]</code> calling
+<code>env_run()</code> on an env if its status is ENV_RUNNABLE.  Be sure
+that you don't create starvation problems.
+
+<li> The last step to making this work requires a small modification
+to env_run().  If you are switching from one env to another, you need
+to save the register state of the current environment before running
+the new env.  Add the following to the begining of env_run().
+<pre>
+if (curenv)
+    /* FILL IN ONE LINE OF CODE HERE */
+</pre>
+Hint: the one line of code uses <code>curenv->env_tf</code> and
+<code>KSTACKTOP</code>.
+
+<p>
+As an aid to you, "alice" and "bob" check that their registers are
+saved/restored correctly.
+</p>
+
+</ol>
+
+<p>
+Ensure that your kernel continually switches between the two envs.  In
+env_run(), you might want to print out the env's <code>envid</code>
+when it is run.
+</p>
+
+Make sure you can answer these questions:
+<ol>
+<li> Examine the code to "alice" and "bob" in <code>lab3.S</code>.
+ What is the purpose of "alice" and "bob" code?
+
+<li> If two copies of "alice" were run (instead of running "alice" and
+"bob"), what mistake in the register saving/restoring code would go
+undetected?
+
+<li> In your implementation of <code>env_run()</code> you should have
+called <code>lcr3()</code>.  But before and after the call to
+<code>lcr3()</code>, your code makes references (at least it should)
+to the variable <code>e</code>--the argument to <code>env_run</code>.
+How can this work?
+
+<p>
+Upon loading the <code>%cr3</code> register, the addressing context
+used by the MMU is instantly changed.  The problem is that a virtual
+address (namely <code>e</code>) has meaning relative to a given
+address context--the address context specifies the physical address to
+which the virtual address map.  Why can the pointer <code>e</code> be
+referenced both before and after the addressing switch?
+</p>
+
+</ol>
+
+<p>
+<b>This completes the lab.</b>
+
+<hr>
+<i>Version: $Revision: 1.6 $. Last modified: $Date: 2003/10/07 19:23:39 $</i>
+
+</body>
+</html>
