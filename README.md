@@ -22,17 +22,27 @@ Please note that the maintainer is neither a student or a staff of MIT, there ma
 
 TODO：还需完善
 
- -  2002：MIT 开始开设操作系统课程 Operating Systems Engineering（6.097）。学生在课上学习 UNIX v6（使用 Lion 作的注释）并在课下完成一个相似的操作系统。
- -  2003：课程代码更改为 6.828。
- -  2004：课下完成的操作系统被命名为 JOS。
+ -  2002：MIT 开始开设操作系统课程 [Operating Systems Engineering（6.097）](https://pdos.csail.mit.edu/archive/6.097/)。学生在课上学习 UNIX v6（参考书为《Lion's Commentary on UNIX' 6th Edition》，中文版为《莱昂氏 UNIX 源代码分析》）并在课下完成一个相似的操作系统。一共有 6 个 Lab，从 Lab1 到 Lab6。
+ -  2003：
+     -  课程代码更改为 [6.828](https://pdos.csail.mit.edu/6.828/2003/)。
+     -  Lab 数量更改为 7 个，新增 Lab0。
+ -  2004：
+     -  课下完成的操作系统被命名为 JOS。
+     -  Lab 数量更改为 6 个，删除 Lab0。
  -  2006：UNIX v6 被 xv6 取代。
- -  2008：改用 Git 分发代码。
- -  2019：课程代码更改为 6.S081。实验数量更改为 10 个。
+ -  2008：
+     -  改用 Git 分发代码。
+     -  Lab 数量更改为 7 个。
+ -  2019：课程代码更改为 6.S081，由研究生课程变为本科生课程。课程难度大幅降低，从完成 JOS 操作系统变为改进 xv6 操作系统。一共有 10 个 Lab。
  -  2022：课程代码更改为 6.1810。
 
 ## 文件
 
-TODO：介绍一下其他备份
+此项目的所有文件都在其他地方备份过：
+ -  2025 年 4 月 21 日，我委托 [ArchiveTeam](https://en.wikipedia.org/wiki/Archive_Team) 为 pdos.csail.mit.edu 做了一次全站存档。
+     -  如果你只是想浏览，那么可以直接前往 [Wayback Machine](https://web.archive.org/)。
+     -  如果你想下载，你可以在 [ArchiveBot Viewer](https://archive.fart.website/archivebot/viewer/job/20250420173816eifrm) 中找到这次存档，然后点击链接前往 Internet Archive 下载（~50 GiB）。
+ -  所有 Git 仓库已存档至 [Software Heritage](https://archive.softwareheritage.org/)。
 
 ### 2003 - 2007
 实验指导为 `.html` 格式，实验代码为 `.tar.gz` 格式。学生切换到下一个 Lab 时需要手动应用更改。
