@@ -1,0 +1,328 @@
+<html>
+  <head>
+    <title>6.828 Fall 2008 Lab 7: Final Project</title>
+    <link rel="stylesheet" href="../labs.css" type="text/css" />
+  </head>
+
+  <body>
+    <h1>6.828 Fall 2008 Lab 7: Final Project</h1> 
+    <p>
+    <b>
+    Handed out Friday, November 14, 2008<br>
+    Tarball Due Friday, December 5, 2008<br>
+	Private Demos on December 4, 5, 11 and 12, 2008<br>
+	In Class Demos on December 3, 2008<br>
+    </b>
+    <p>
+
+    <h1>Introduction</h1>
+
+      In this lab you will flesh out your kernel and library operating
+      system enough to run a shell on the console. You will then do the
+      core of the lab: the final project.
+
+    <h2>Lab Requirements</h2>
+
+      Unlike in previous labs, in this lab you may work in pairs. 
+      Here are some ideas for you final project:
+
+      <ul>
+	      <li>Graphics w/ raw access to VGA framebuffer + compelling app to
+	      show it off
+
+	      <li>Port an app to JOS (e.g. Doom)
+
+	      <li>Port tcc (tiny C compiler) to JOS, so you can compile JOS
+	      apps in JOS
+
+	      <li>Write a user-level debugger; add strace-like functionality;
+	      hardware register profiling (e.g. Oprofile); call-traces
+
+	      <li>Make JOS a distributed system; implement live migration of
+	      processes, fault tolerance, etc.
+
+	      <li>Make the file system fault tolerant: using journaling or soft
+	      updates, etc.
+
+	      <li>Build a network file server
+
+	      <li>Add users and access control to JOS + add telnet to show
+	      users login and access control + some other security feature
+
+	      <li>Make JOS run on real hardware and demonstrate a compelling
+	      reason for running JOS on real hardware (e.g. performance)
+
+	      <li>Implement a VMM with hardware support (qemu can emulate
+	      VMRUN).
+
+	      <li>Add SMP support to JOS
+
+	      <li>Loadable kernel modules in JOS
+
+	      <li>KeyKOS-style single-level store
+
+	      <li>Binary emulation for (static) Linux executables
+      </ul>
+
+      To complete the assignment, you will turn in a tarball of your
+      code as usual. In addition, you will have to demonstrate your
+      final project for the TAs in person on December 4th or 5th.
+      Dates and a sign-up form will be posted soon. Every group should
+      also be prepared to do a 5 minute in-class demo on Wednesday
+      December 3rd, 2008.
+      <p>
+
+      <b>Late policy</b>.  If you are working in a pair, you may
+      combine your late days, so if one of you has one day and the
+      other also has one day, you can turn in the finished code up to
+      two days late without penalty.  However, the
+      assignment <i>must</i> be turned in by the evening of Friday,
+      December 12, even if you have enough late days (or want to use
+      penalty days) to be able to hand it in later.  Labs received
+      after Friday, December 12 will receive an F.  Groups that turn
+      in their project late will meet with the TAs on Friday, December
+      12th instead. Regardless when you turn in your code, you must
+      still be prepared to demo your project in class on December 3rd.
+      <p>
+
+    <h2>Getting Started</h2>
+<p>
+Use Git to commit your Lab 6 source, fetch the latest version of the course
+repository, and then create a local branch called <tt>lab7</tt> based on our
+lab7 branch, <tt>origin/lab7</tt>:
+<pre>
+athena% <b>cd ~/6.828/lab</b>
+athena% <b>git commit -am 'my solution to lab6'</b>
+Created commit 734fab7: my solution to lab6
+ 4 files changed, 42 insertions(+), 9 deletions(-)
+athena% <b>git pull</b>
+Already up-to-date.
+athena% <b>git checkout -b lab7 origin/lab7</b>
+Branch lab7 set up to track remote branch refs/remotes/origin/lab7.
+Switched to a new branch "lab7"
+athena% <b>git merge lab6</b>
+Merge made by recursive.
+ kern/env.c |   42 +++++++++++++++++++
+ 1 files changed, 42 insertions(+), 0 deletions(-)
+athena% 
+</pre>
+
+    <p>
+
+<h2>Shared Repository</h2>
+
+Since most of you will be working in groups for this lab assignment,
+you may want to use <tt>git</tt> to share your project code between
+group members.  To set up a shared git repository in AFS, one of
+your group members should run the following commands to create the
+repository in their home directory:
+
+<pre>
+athena% <b>cd ~/6.828</b>
+athena% <b>mkdir project-repo.git</b>
+athena% <b>cd project-repo.git</b>
+athena% <b>fs sa . <i>groupmember1</i> rlidwk</b>
+athena% <b>fs sa . <i>groupmember2</i> rlidwk</b>
+athena% <b>git --bare init</b>
+Initialized empty Git repository in /afs/athena.mit.edu/user/<i>g/r/groupmember0</i>/6.828/project-repo.git/
+athena% 
+</pre>
+
+Now you will need to decide on whose source code you will use as
+a starting point for your group project.  That group member should
+run the following commands to place his or her lab7 source code into the
+group repository:
+
+<pre>
+athena% <b>cd ~/6.828/lab</b>
+athena% <b>git remote add group /afs/athena.mit.edu/user/<i>g/r/groupmember0</i>/6.828/project-repo.git</b>
+athena% <b>git checkout -b project lab7</b>
+Switched to a new branch "project"
+athena% <b>git push group project</b>
+Counting objects: 3, done.
+Writing objects: 100% (3/3), 221 bytes, done.
+Total 3 (delta 0), reused 0 (delta 0)
+Unpacking objects: 100% (3/3), done.
+To /afs/athena.mit.edu/user/<i>g/r/groupmember0</i>/6.828/project-repo.git
+ * [new branch]      project -> project
+athena% <b>git config branch.project.remote group</b>
+athena% <b>git config branch.project.merge refs/heads/project</b>
+athena% 
+</pre>
+
+The other members of your group should configure their git checkouts
+to track the <tt>project</tt> branch from this shared group repository,
+as follows:
+
+<pre>
+athena% <b>cd ~/6.828/lab</b>
+athena% <b>git remote add group /afs/athena.mit.edu/user/<i>g/r/groupmember0</i>/6.828/project-repo.git</b>
+athena% <b>git fetch group</b>
+From /afs/athena.mit.edu/user/<i>g/r/groupmember0</i>/6.828/project-repo.git
+ * [new branch]      project    -> group/project
+athena% <b>git checkout -b project group/project</b>
+Branch project set up to track remote branch refs/remotes/group/project.
+Switched to a new branch "project"
+athena% 
+</pre>
+
+At this point, all of your group members should be able to pull and push
+commits from the shared repository by running <tt>git pull</tt> and
+<tt>git push</tt> on the <tt>project</tt> branch, respectively.  Keep in
+mind that git only tracks files that you have explicitly committed, so
+you may want to run <tt>git status</tt> periodically to see if there are
+any lingering files in your checkout that you haven't committed.  You can
+use <tt>git add <i>filename</i></tt> to tell git about files you would
+like to commit with the next <tt>git commit</tt> command.  If there
+are files that you will never want to commit, and you want to prevent them
+from showing up in the output of <tt>git status</tt>, you should create a
+file named <tt>.gitignore</tt> and add the filenames that you'd like
+<tt>git status</tt> to ignore to that file, one per line.
+
+    <h1>Part 1: sharing library code across fork and spawn</h1>
+
+      We would like to share file descriptor state across
+      <code>fork</code> and <code>spawn</code>, but file descriptor state is kept
+      in user-space memory.  Right now, on <code>fork</code>, the memory
+      will be marked copy-on-write,
+      so the state will be duplicated rather than shared.
+      (This means that running "<code>(date; ls) &gt;file</code>" will
+      not work properly, because even though date updates its own file offset,
+      ls will not see the change.)
+      On <code>spawn</code>, the memory will be
+      left behind, not copied at all.  (Effectively, the spawned environment
+      starts with no open file descriptors.)
+      <p>
+
+      We will change <code>fork</code> to know that 
+      certain regions of memory are used by the "library operating system" and
+      should always be shared.  Rather than hard-code a list of regions somewhere,
+      we will set an otherwise-unused bit in the page table entries (just like
+      we did with the <code>PTE_COW</code> bit in <code>fork</code>). <p>
+
+      We have defined a new <code>PTE_SHARE</code> bit
+      in <code>inc/lib.h</code>.
+      This bit is one of the three PTE bits
+      that are marked "available for software use"
+      in the Intel and AMD manuals.
+      We will establish the convention that
+      if a page table entry has this bit set,
+      the PTE should be copied directly from parent to child
+      in both <code>fork</code> and <code>spawn</code>.
+      Note that this is different from marking it copy-on-write:
+      as described in the first paragraph,
+      we want to make sure to <i>share</i>
+      updates to the page.<p>
+
+      <div class="todo required">
+        <p><span class="header">Exercise 1.</span>
+
+      Change <code>duppage</code> in <code>lib/fork.c</code> to follow
+      the new convention.  If the page table entry has the <code>PTE_SHARE</code>
+      bit set, just copy the mapping directly.
+      (Note that you should use <code>PTE_USER</code>, not <code>PTE_FLAGS</code>,
+      to mask out the relevant bits from the page table entry. <code>PTE_FLAGS</code>
+      picks up the accessed and dirty bits as well.)
+      <p>
+      </p></div>
+
+<!--
+      <div class="todo required">
+        <p><span class="header">Exercise 2.</span>
+      Change <code>spawn</code> in <code>lib/spawn.c</code> to propagate
+      the <code>PTE_SHARE</code> pages.  After it finishes
+      setting up the child virtual address space but before it marks the
+      child runnable, it should loop through all the page table
+      entries in the current process (just like <code>fork</code> did), copying any
+      mappings that have the <code>PTE_SHARE</code> bit set.<p>
+      </p></div>
+-->
+
+      Use <code>gmake run-testpteshare</code> to check that your code is 
+      behaving properly.<p>
+      You should see lines that say "<code>fork handles PTE_SHARE right</code>"
+      and "<code>spawn handles PTE_SHARE right</code>".
+      
+
+      <div class="todo required">
+        <p><span class="header">Exercise 2.</span>
+      Change the file server so that
+      all the file descriptor table pages and the file data pages get mapped
+      with <code>PTE_SHARE</code>.<p>
+      </p></div>
+
+      Use <code>gmake run-testfdsharing</code> to check that file descriptors are shared
+      properly.
+      You should see lines that say "<code>read in child succeeded</code>" and 
+      "<code>read in parent succeeded</code>".<p>
+
+    <h1>Part 2: the keyboard interface</h1>
+
+      For the shell to work, we need a way to type at it.
+      <code>bochs</code> has been displaying output we write to
+      the printer port, but there is no good way to give it input.
+      Instead, we'll use the X11-based interface 
+      and use CGA output and a keyboard driver.  We've written the keyboard driver
+      for you in <code>kern/console.c</code>, but you need to attach it to the rest
+      of the system. <p>
+
+      <div class="todo required">
+        <p><span class="header">Exercise 3.</span>
+      In your <code>kern/trap.c</code>, call <code>kbd_intr</code> to handle trap
+      <code>IRQ_OFFSET+IRQ_KBD</code>.  <p>
+      </p></div>
+
+      We implemented the console input/output file type for you,
+      in <code>user/console.c</code>.  <p>
+
+      Test your code by running <code>gmake xrun-testkbd</code> and type
+      a few lines.  The system should echo your lines back to you as you finish them.
+      Make sure you type into the X window <code>bochs</code> brings up, not the console.
+
+    <h1>The Shell</h1>
+
+      Run <code>gmake xrun-icode</code>.  This will run your kernel inside the
+      X11 Bochs starting <code>user/icode</code>.  <code>Icode</code> execs <code>init</code>,
+      which will set up the console as file descriptors 0 and 1 (standard input and
+      standard output).  It will then spawn <code>sh</code>, the shell.
+      You should be able to run the following
+      commands:
+<pre>
+	echo hello world | cat
+	cat lorem >out
+	cat out
+	cat lorem |num
+	cat lorem |num |num |num |num |num
+	lsfd
+	cat script
+	sh &lt;script
+</pre>
+      Note that the user library routine <code>printf</code> prints straight
+      to the console, without using the file descriptor code.  This is great
+      for debugging but not great for piping into other programs.
+      To print output to a particular file descriptor (for example, 1, standard output),
+      use <code>fprintf(1, "...", ...)</code>.  See <code>user/ls.c</code> for examples. <p>
+
+      Run <code>gmake run-testshell</code> to test your shell.
+      <code>Testshell</code> simply feeds the above commands (also found in
+      <code>fs/testshell.sh</code>) into the shell and then checks that the
+      output matches <code>fs/testshell.key</code>.<p>
+
+<p>
+<div class="todo challenge">
+<p><span class="header">Challenge!</span>
+	Do an awesome final project!
+</div>
+
+<br>
+
+This ends the lab.  As usual, you can grade your submission
+with <code>gmake grade</code> and hand it in with <code>gmake
+handin</code>. By December 3rd, you
+should be prepared to show off your challenge to the class.
+December 4th and 5th you will present to the TAs. <p>
+
+  </body>
+</html>
+
+

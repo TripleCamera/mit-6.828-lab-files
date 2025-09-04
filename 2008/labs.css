@@ -1,0 +1,31 @@
+div.todo {
+    margin-left: auto;
+    margin-right: auto;
+    margin-bottom: 1em;
+    margin-top: 1em;
+    width: 80%;
+    background-color: #e0e0ff;
+    border: 4px double black;
+    padding-left: 5px;
+    padding-right: 5px;
+}
+
+div.required .header {
+    font-weight: bold;
+}
+
+div.challenge .header {
+    font-style: italic;
+}
+
+div.required {
+    background-color: #e0e0ff;
+}
+
+div.challenge {
+    background-color: #ffe0e0;
+}
+
+div.question {
+    background-color: #e0e0ff;
+}

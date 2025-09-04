@@ -44,6 +44,10 @@ TODO：还需完善
      -  如果你想下载，你可以在 [ArchiveBot Viewer](https://archive.fart.website/archivebot/viewer/job/20250420173816eifrm) 中找到这次存档，然后点击链接前往 Internet Archive 下载（~50 GiB）。
  -  所有 Git 仓库已存档至 [Software Heritage](https://archive.softwareheritage.org/)。
 
+```console
+$ find -type f | sort | xargs sha256sum > sha256sums
+```
+
 ### 2003 - 2007
 实验指导为 `.html` 格式，实验代码为 `.tar.gz` 格式。学生切换到下一个 Lab 时需要手动应用更改。
 

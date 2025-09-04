@@ -1,0 +1,11 @@
+Remove the tcc suggestion.  It doesn't really have an OS component.
+
+VESA graphics is now easy:
+  http://wiki.osdev.org/Bochs_VBE_Extensions
+which is too bad, since students miss out on learning a lot of
+interesting OS things; though, this does give them the opportunity to
+actually do more interesting things.  Should we point them at this
+page in the reference materials?
+
+Ask for a brief write-up about what they did for their project and how
+they implemented it.

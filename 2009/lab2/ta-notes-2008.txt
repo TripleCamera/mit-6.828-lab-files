@@ -1,0 +1,26 @@
+Date: Fri, 26 Sep 2008 20:27:22 -0400
+From: Irene Zhang <iyzhang@MIT.EDU>
+To: 6.828-staff@pdos.csail.mit.edu
+Subject: common points of confusion for lab 2
+
+After helping some students with lab 2 I think I've found some things that caused 
+problems for a lot of them. 
+
+1. Many students do not remember lab 1. They do not remember that we mapped 
+   0x00000000 to 0xf0000000 using segmentation, so in lab 2 they can use KADDR 
+   and PADDR to convert between physical and virtual addresses. They think since 
+   we have not started using paging yet, physical address must be equal to 
+   virtual addresses. Perhaps we need to stress more how important understanding 
+   lab 1 is for lab 2. 
+
+2. Many students think that the kernel can use physical addresses. I can't tell 
+   if this is because in lab 2 paging has not been turned on yet, or if this is 
+   a more general misconception.
+
+3. Many students cannot tell which limitations are due to design decisions made 
+   specifically for JOS, or just inherent limitations. For example, many students 
+   are confused about the way the virtual address space is laid out and why JOS 
+   can only address 256 MB of memory. This was explained in lab 1, but many 
+   students forgot and are now very confused.
+
+Irene

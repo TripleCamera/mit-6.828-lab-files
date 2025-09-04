@@ -1,0 +1,65 @@
+We give them the prototype for sys_env_set_trapframe and say "LAB 4:
+Your code here", but we don't use it until lab 5.  I think it's
+included here because all of the other sys_env syscalls are, but it is
+a bit confusing, especially since the lab directions never tell them
+to implement it.
+
+In _pgfault_upcall, people don't understand when they can no longer
+use scratch registers.  Perhaps change
+	// Restore the trap-time registers.
+to
+	// Restore the trap-time registers.  After this point, you can
+	// no longer modify any general-purpose registers.
+And change
+	// Restore eflags from the stack.
+to
+	// Restore eflags from the stack.  After this point, you can
+	// no longer use arithmetic operations or anything else that
+	// modifies eflags.
+I'm not sure the "What registers are available for intermediate
+calculations?" hint is actually useful, since you can only answer it
+if you already understand what needs to be done.
+
+Lots and lots of students had buggy _pgfault_upcall's.  Many failed to
+correctly restore eflags, which is probably harmless.  A handful
+failed to restore esp (Athena's GCC dealt with this, so they didn't
+notice).  Because of this, I added user/faultregs.  It should be added
+to the grade script, probably after faultdie, probably like
+runtest1 faultregs \
+	'Registers in UTrapframe OK' \
+	! 'Registers in UTrapframe MISMATCH' \
+	'Registers after page-fault OK' \
+	! 'Registers after page-fault MISMATCH'
+
+Numerous students have been tripped-up by the order of checks in
+page_fault_handler.  There are many valid orders, but the grade script
+make some strict assumptions, which we never spell out.  First, we
+assume that you won't user_mem_assert anything about the exception
+stack if an environment doesn't have a page-fault upcall, and will
+instead fall through to the "user fault va" error at the end.  We
+should simply state this.  Second, we state that you should check that
+the exception stack is present and that you should check for exception
+stack overflow.  However, the grade script assumes students will
+implement this as a single user_mem_assert for the destination of the
+UTrapframe (which also checks if the exception stack is mapped).  If
+they user_mem_assert for the exception stack first, their kernel
+prints a memory assertion at eebff000 instead of the required
+eebfff.. (note the extra 'f').  We could either spell this out
+(perhaps as a hint, since it's interesting to figure out that one test
+subsumes the other), or we could split this in to two tests, one that
+simply checks for eebff... and one that produces recursive page faults
+to run the UTrapframe off the exception stack.
+
+A number of students implement page passing in sys_ipc_try_send by
+calling sys_page_map.  This works in this lab because all IPC is done
+between parent and child environments.  It breaks in later labs when
+IPC happens between unrelated environments.  Add a test that performs
+IPC between unrelated environments, for example, by forking twice and
+sending IPC between grandparent and grandchild.
+
+We should either not enable serial interrupts in serial_init yet, or
+we should ask students to add the call to serial_intr in trap_dispatch
+in this lab instead of lab 7.  Currently, serial interrupts are
+enabled but not being handled, so if they press a key in the serial
+console while a user environment is running, it will blame the
+interrupt on the environment and kill it.

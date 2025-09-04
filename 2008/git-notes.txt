@@ -1,0 +1,42 @@
+URLs:
+
+  RO: http://pdos.csail.mit.edu/6.828/2008/labrepo
+  RW: git+ssh://pdos.lcs.mit.edu/home/am0/6.828/gitlabs08
+
+magic glue in repo:
+
+  /home/am0/6.828/gitlabs08/hooks/post-receive:
+
+	GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
+	git update-server-info -f
+
+lab1:
+
+  git clone
+  git commit -a -m 'my solution to lab1'
+  git diff origin/lab1
+  git diff
+
+lab2:
+
+  git checkout -b lab2 origin/lab2
+    [ Equivalent to: git branch lab2 origin/lab2; git checkout lab2 ]
+  git merge lab1
+  git commit -a -m 'merge with solution from lab1' (if conflicts)
+  git diff origin/lab2
+  ...
+  git commit -a -m 'my solution to lab2'
+
+  (git checkout lab1, to go back)
+
+publishing:
+
+  git clone git+ssh://pdos.lcs.mit.edu/home/am0/6.828/gitlabs08 lab-master
+  git checkout -b labN lab(N-1)
+    [ Equivalent to: git branch labN lab(N-1) ; git checkout labN ]
+  (cd ../jos/ ; make export-labN ; cd labN ; tar -cf - ) | tar -xvf -
+  remember to take PACKAGEDATE out of conf/lab.mk
+  git status | ... | git add
+  git commit -m 'labN'
+  git push --all
+

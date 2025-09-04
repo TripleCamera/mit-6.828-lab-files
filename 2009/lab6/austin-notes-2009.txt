@@ -1,0 +1,59 @@
+At the end of the term, I added testtime, testoutput, and testinput.
+They're all integrated into the grade script already, but need to be
+mentioned in the lab writeup.  testinput has the odd caveat that
+output needs to be working for at least one packet (since it needs to
+transmit an ARP packet).
+
+Make it clear that "make nc-7" does not itself run QEMU.  A surprising
+number of students were confused by the "connection refused" messages
+produced by "make nc-7" when they hadn't started QEMU.
+
+Fix lwip thread scheduling.  The lwip environment blocks on the IPC
+receive even when there is working waiting in the other cooperative
+threads.  That's why the echo is so slow (it ultimately gets pushed
+through by the timer IPC) and why Adam's got behind without the timer
+IPC.
+
+The E100 spec is frustratingly impenetrable, and seems to be doubly so
+for students who have never seen a spec before.  It's written from the
+perspective of building the card and not at all from the perspective
+of controlling the card.  I found myself constantly flipping between
+three or so places in the reference while writing the driver.  Some
+sort of cross-reference that highlights the important parts and puts
+them in a sensible order for driver-writing may prove extremely
+helpful.
+
+
+Incorporate the following patch
+
+commit cbd48ea1c4c2326b2a972ef7a4d97217cd47498f
+Author: David Benjamin <davidben@mit.edu>
+Date:   Wed Nov 25 21:10:25 2009 -0500
+
+     Fix buffer overflow in eepro100.c
+
+diff --git a/hw/eepro100.c b/hw/eepro100.c
+index 4d4d07f..c257c30 100644
+--- a/hw/eepro100.c
++++ b/hw/eepro100.c
+@@ -567,16 +567,16 @@ static const char *reg[PCI_IO_SIZE / 4] = {
+
+  static char *regname(uint32_t addr)
+  {
+-    static char buf[16];
++    static char buf[32];
+      if (addr < PCI_IO_SIZE) {
+          const char *r = reg[addr / 4];
+          if (r != 0) {
+-            sprintf(buf, "%s+%u", r, addr % 4);
++            snprintf(buf, sizeof(buf), "%s+%u", r, addr % 4);
+          } else {
+-            sprintf(buf, "0x%02x", addr);
++            snprintf(buf, sizeof(buf), "0x%02x", addr);
+          }
+      } else {
+-        sprintf(buf, "??? 0x%08x", addr);
++        snprintf(buf, sizeof(buf), "??? 0x%08x", addr);
+      }
+      return buf;
+  }

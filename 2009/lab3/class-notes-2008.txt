@@ -1,0 +1,24 @@
+challenge should ask students to use syscall/sysret, which
+do the right thing with eflags.if
+
+== Austin (2009) ==
+
+SYSCALL/SYSRET are only supported in 32-bit mode on AMD, but QEMU
+follows Intel and thus students must use SYSENTER/SYSEXIT.  However,
+it turns they *can* do the right thing with EFLAGS.IF.
+
+The "problem" is that, while SYSENTER disables interrupts, SYSEXIT
+doesn't touch IF.  We have to enable interrupts before going back into
+userspace, so the SYSEXIT path must STI.  If not done carefully, this
+might allow a timer interrupt to preempt the kernel.  However, STI
+waits one instruction before enabling interrupts, so if the exit
+sequence is exactly STI; SYSEXIT we will enable interrupts, but only
+after we've returned to userspace.
+
+Unfortunately, most of this subtlety doesn't come up in this lab
+because we haven't enabled interrupts anyways.  In fact, lab 3 will
+double fault if you STI because we haven't set up the IRQ trap
+handlers.  If you don't STI in later labs, the only test that will
+fail is the spin test because it's the only test that depends on
+preemptive multitasking.  If you do STI but screw up the sequence,
+random things will break non-deterministically.

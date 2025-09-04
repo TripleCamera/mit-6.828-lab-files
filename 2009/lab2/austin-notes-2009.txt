@@ -1,0 +1,15 @@
+Add a check to check_boot_pgdir that the memory at KSTACKTOP-PTSIZE is
+*not* mapped.  We should also check the permissions on
+KSTACKTOP-PGSIZE, since we don't use that stack until later labs and
+thus won't catch permission errors in this lab.
+
+
+
+We're very sloppy about the terms "virtual memory" and "virtual
+address."  In JOS, we use the term for both logical and linear
+addresses.  The Intel manuals never use the term "virtual address",
+preferring the more precise "linear address".  i386_vm_init even talks
+about "VA => LA => PA" translation, which is simply wrong (it should
+be "logical => virtual/linear => physical").  We're also intermix
+variable names like "va" and "la".  "va" is probably better, since
+both "logical" and "linear" start with "l".

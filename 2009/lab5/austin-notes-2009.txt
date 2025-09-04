@@ -1,0 +1,50 @@
+The "Implement soft updates instead" challenge exercise should perhaps
+be "Implement journalling" since we've switched away from reading Soft
+Updates.  Implementing journalling is also a reasonable thing to do in
+JOS, whereas Soft Updates would be extremely difficult.  If we want to
+keep Soft Updates in there, we could add, "If you're feeling
+especially adventurous, try implementing Soft Updates from <link>".
+
+The challenge exercises are all rather difficult, unlike other labs,
+which have a gradient.
+
+Add a test that reads a block, updates it, then reads it again without
+flushing it to make sure read_block recognized that the page was
+already mapped and didn't re-read it from disk.
+
+Add a test that reads/writes files large enough to have indirect
+blocks.
+
+Add a test that writes to a file, flushes it to disk, then reads it
+back.  (Suggested by rishig)
+
+Add a test that fills up most of the disk to stress bitmap code.
+(Suggested by rishig)
+
+There's no way to create new files within JOS, even though there's a
+file_create function in fs/fs.c.  I think all this takes is a few more
+lines in fs/serv.c:serve_open.  There's even a flag already.
+
+Tell them to clear the dirty bit in read_block after ide_read'ing.
+Otherwise, every page read from disk starts out marked dirty.
+
+
+
+I don't like this lab.  In order to make it short, it's been stripped
+of all interesting content related to the actual file system.  Most of
+what students have to implement are bizarre memory mapping tricks, the
+design of which are completely irrelevant to any real life file
+system.  The design is so inflexbile that no real file system even
+*could* work this way.  By the end, my head was spinning from the tour
+de force of layers, none of which I really understood since I had
+spent so little time dealing with any one of them.  Up until this
+point, I feel like students could easily understand the entirety of
+JOS and feel like they've really built the whole system despite the
+provided code.  I feel like this lab diverges from this.
+
+Silas suggested that the file system could be reimplemented as a
+library, without the need for a file system server, by adding a few
+shared-memory synchronization primitives (even a yielding xchg
+spinlock is probably enough).  This may or may not make things
+simpler, but it would at least reduce the number of layers and
+components that students need to understand.

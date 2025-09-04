@@ -1,0 +1,1253 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<html>
+  <head>
+    <title>Lab 6: Network Driver</title>
+    <link rel="stylesheet" href="../labs.css" type="text/css" />
+  </head>
+
+<body>
+
+<h1>6.828 Fall 2008 Lab 6: Network Driver</h1>
+
+<p>
+<b>
+Handed out Thursday, November 6, 2008<br>
+Due Thursday, November 20, 2008<br>
+</b>
+
+<h1>Introduction</h1>
+
+Now that you have a file system, no self respecting OS should go
+without a network stack. In this the lab you are going to write a
+driver for a network interface card. The card will be based on the
+Intel 82559ER chip, also known as the E100 and eepro100.
+
+<h3>Getting Started</h3>
+
+<p>
+Use Git to commit your Lab 5 source, fetch the latest version of the course
+repository, and then create a local branch called <tt>lab6</tt> based on our
+lab6 branch, <tt>origin/lab6</tt>:
+<pre>
+athena% <b>cd ~/6.828/lab</b>
+athena% <b>git commit -am 'my solution to lab5'</b>
+Created commit 734fab7: my solution to lab5
+ 4 files changed, 42 insertions(+), 9 deletions(-)
+athena% <b>git pull</b>
+Already up-to-date.
+athena% <b>git checkout -b lab6 origin/lab6</b>
+Branch lab6 set up to track remote branch refs/remotes/origin/lab6.
+Switched to a new branch "lab6"
+athena% <b>git merge lab5</b>
+Merge made by recursive.
+ fs/fs.c |   42 +++++++++++++++++++
+ 1 files changed, 42 insertions(+), 0 deletions(-)
+athena% 
+</pre>
+
+<p>
+The driver, however, will not be enough to get your OS hooked up to the
+Internet. In the new lab6 code, we have provided you with a network stack
+and a network server. As in previous labs, use git to grab the code for
+this lab, merge in your own code, and explore the contents of the new
+<code>net/</code> and <code>kern/dev/</code> directories.
+
+<p>
+In addition to writing the driver, you will need to create a system call
+interface to give access to your driver. You will implement missing network
+server code to transfer packets between the network stack and your driver.
+You will also tie everything together by finishing a web server. With the new
+web server you will be able to serve files from your file system.
+
+<p>
+Much of the kernel device driver code you will have to write yourself from
+scratch. There are no skeleton files and no system call interfaces written in stone. For
+this reason, we recommend that you read the entire assignment write up
+before starting any individual exercises.
+
+<h3>Lab Requirements</h3>
+
+As before, you will need
+to do all of the regular exercises described in the lab and <i>at
+least one</i> challenge problem.
+Additionally, you will
+need to write up brief answers to the questions posed in the lab and a
+short (e.g., one or two paragraph) description of what you did to
+solve your chosen challenge problem.  If you implement more than one
+challenge problem, you only need to describe one of them in the
+write-up, though of course you are welcome to do more.  Place the
+write-up in a file called <tt>answers.txt</tt> (plain text)
+or <tt>answers.html</tt> (HTML format) in the top level of
+your <tt>lab6</tt> directory before handing in your work.
+
+<h2>Debugging Environment</h2>
+
+You will need to use
+<a href="http://bellard.org/qemu/">QEMU</a>
+for this lab; QEMU emulates the Intel 82559ER (a good design) while Bochs
+emulates only fairly awkward ethernet cards.
+We've set up <tt>qemu</tt> for you on Athena.
+You will soon notice that there are many arguments passed to QEMU. We
+have included a script called <code>qemu.sh</code> to make running QEMU easier.
+
+<p>
+We will be using QEMU's user mode network stack which requires no administrative
+privileges to run. QEMU's documentation has more about user-net
+<a href="http://bellard.org/qemu/qemu-doc.html#SEC30">here</a>. The network
+card can be enabled as follows:
+
+<pre>
+qemu -hda obj/kern/bochs.img -hdb obj/fs/fs.img -parallel /dev/stdout -net user -net nic,model=i82559er
+</pre>
+
+<!--
+In user-net mode, QEMU intercepts all packets sent from the NIC and
+forwards them to the Internet through the host and wraps all packets destined
+for the guest in an Ethernet header.
+-->
+
+<p>
+User-net can be viewed like a NAT that sits between JOS and the Internet;
+therefore, JOS itself cannot be directly addressed from outside QEMU. QEMU's
+NAT runs on the 10.0.2.0 subnet, the default QEMU guest IP address is 10.0.2.15
+and the default router IP is 10.0.2.2. The network server needs to use these
+defaults and are defined in <code>net/ns.h</code>.
+
+</p><h3>Redirection</h3>
+
+Since JOS is sitting behind a NAT, there is no way to initiate connections with
+a network server running on JOS because there is no way of addressing the
+machine. JOS's 10.0.2.15 address has no meaning outside QEMU. To fix this, we
+will use redirection to forward a host machine port number to a port number on
+JOS. We do it like this:
+
+<pre>
+qemu -hda obj/kern/bochs.img -hdb obj/fs/fs.img -parallel /dev/stdout -net user -net nic,model=i82559er -redir tcp:4242::10000
+</pre>
+
+Now you can use tools like <code>telnet</code> or netcat (the command line name
+for netcat is <code>nc</code>) to connect to a service running on JOS. For
+example, to connect to port 10000 on JOS, run:
+
+<pre>
+telnet localhost 4242
+nc localhost 4242
+</pre>
+
+To test your networking code, we have provided a daemon called
+<code>tcpsrv</code>. Running <code>tcpsrv</code> will setup an echo server
+running on port 10000 that will echo back anything sent over a TCP connection.
+If you <code>telnet</code> to the redirected port, anything you type will be
+sent back to you.
+
+</p><h3>Packet Inspection</h3>
+
+<p>
+It is very helpful to examine any packets sent to or received from the host
+machine. However, since the details of user-net do not allow easy access to the
+packet flow, our version of QEMU provides a mechanism that dumps every packet
+that passes through user-net into a file. The file is stored using the pcap
+format. This popular packet capture file format allows you to use either
+<code>tcpdump</code> or <code>wireshark</code> to examine both the packet flow
+and packet structure. Here is how to enable pcap printing in our version of
+QEMU:
+
+<pre>
+qemu -hda obj/kern/bochs.img -hdb obj/fs/fs.img -parallel /dev/stdout -net user -net nic,model=i82559er -redir tcp:4242::10000 -pcap slirp.cap
+</pre>
+
+To read the captured packets in ASCII use <code>tcpdump</code> like this:
+
+<pre>
+tcpdump -nnxr slirp.cap
+</pre>
+
+Wireshark is a graphical version of <code>tcpdump</code>. It is not installed
+on Athena, but you are welcome to use it on your own computers.
+
+<p>
+Note that the <tt>-pcap</tt> option is only available in our version of QEMU.
+
+</p><h3>Debugging the E100</h3>
+
+We are very lucky to be using emulated hardware. Since the E100 is running in
+software, the emulated E100 can report to us, in a user readable format, its
+internal state and any problems it encounters. Normally, such a luxury would
+not be available to a driver developer writing with bare metal. To turn on E100
+debug information use the following:
+
+<pre>
+qemu -hda obj/kern/bochs.img -hdb obj/fs/fs.img -parallel /dev/stdout -net user -net nic,model=i82559er -redir tcp:4242::10000 -pcap slirp.cap -debug-e100
+</pre>
+
+Once the E100 debug command line option is set, the emulated E100 will print
+debug messages to the terminal where you launched QEMU. It will print lines
+like this:
+
+<pre>
+EE100   eepro100_write1         addr=Command/Status+1 val=0x20
+EE100   disable_interrupt       interrupt disable
+</pre>
+
+Note that the <tt>-debug-e100</tt> option is only available in our version of QEMU.
+
+<p>
+You can take debugging using software emulated hardware on step further. If
+you are ever stuck and do not understand why the driver is not understanding
+your commands or it is reporting cryptic message, you can look at the emulated
+hardware source code for hints. The source for the E100 emulated hardware is in
+the QEMU tarball.
+
+</p><h3>QEMU on Your Computer</h3>
+
+If you want to run QEMU on your own computer, then you are going to need to
+download the QEMU 0.9.1 tarball, and apply out patch before compiling.
+You can find the ordinary QEMU source
+<a href="../../src/qemu-0.9.1.tar.gz">here</a>, and the patch
+<a href="../../src/qemu-0.9.1-6.828.patch">here</a>,
+and you should use <tt>patch -p1 < qemu-0.9.1-6.828.patch</tt> to apply the
+patch.
+The patch adds the <tt>-pcap</tt> and <tt>-debug-e100</tt> options to qemu,
+and fixes a bug in qemu's simulated network device.
+
+<h2>The Network Server</h2>
+
+Writing a network stack from scratch is hard work. Instead, we will be using 
+LwIP, an open source lightweight TCP/IP protocol suite that among many things
+includes a network stack. You can find more information on lwIP
+<a href="http://www.sics.se/~adam/lwip/">here</a>. In this assignment, as far
+as we are concerned, lwIP is a black box that implements a BSD socket interface
+and has a packet input port and packet output port.
+
+<p>
+What we call the network server is actually a combination of four environments,
+they are:
+
+<ul>
+	<li> core network server environment (includes socket call dispatcher and lwIP)
+	<li> input environment
+	<li> output environment
+	<li> timer environment
+</ul>
+
+The following diagram shows the different environments and their relationships.
+The diagram shows the entire system including the device driver which will be
+covered later.
+
+<p>
+<img src="ns.png" align="center">
+
+<h3>The Core Network Server Environment</h3>
+
+<p>
+The core network server environment is composed of the socket call dispatcher
+and lwIP itself. The socket call dispatcher works exactly like the file server.
+User environments use stubs (found in <code>lib/nsipc.c</code>) to send IPC
+messages to the core network environment. If you look at
+<code>lib/nsipc.c</code> you will see that we use the same trick as in the file
+server to name the core network server: we start the network server right after
+the file server thereby forcing the ns to have an <code>envid</code> of 2.
+For each user environment IPC, the dispatcher calls the appropriate BSD socket
+interface function provided by lwIP on behalf of the user. The file server
+interface required that we implement a file descriptor to keep track of file
+state, lwIP implements this facility for us. The subset of BSD socket calls
+that our network server provides can be found in <code>inc/lib.h</code>. Take careful note that
+closing a socket descriptor is done by <code>closesocket</code> and not simply
+<code>close</code> (this is due to having a separate file and socket descriptor).
+
+<p>
+Even though it may seem that the IPC dispatchers of the file server and network
+server act the same, there is a key difference. BSD socket calls like
+<code>accept</code> and <code>recv</code> can block indefinitely. If the
+dispatcher were to let lwIP execute one of these blocking calls, the dispatcher
+would also block and there could only be one outstanding
+network call for the whole kernel. Since this is unacceptable, the network
+server uses user level threading to avoid blocking the entire server
+environment. For every incoming IPC message, the dispatcher creates a
+thread and processes the request in the newly created thread. If the thread
+blocks, then only that thread is put to sleep while other threads have a chance
+to run.
+
+<h3>The Timer Environment</h3>
+
+<p>
+In addition to the core network environment there are three helper
+environments. Not only does the dispatcher accept messages from user
+applications, it also accepts messages from the timer environment.
+The timer
+environment periodically sends messages of type <code>NSREQ_TIMER</code> to the
+core network server notifying it that a timer has expired. The timers interrupts
+from this thread are used by lwIP to implement TCP timeouts.
+
+<p>
+Unfortunately, your kernel does not have a notion of time and we need to add
+it. We have opted for a simple method of adding time to JOS. There is
+currently a clock interrupt that is generated by the hardware every 10ms. On
+every clock interrupt we can increment a variable to indicate that time has
+advanced by 10ms. This is implemented in <code>kern/time.c</code>, but is not
+yet fully integrated into your kernel.
+
+</p><p>
+<div class="todo required">
+<p><span class="header">Exercise 1.</span>
+Add a call to <code>time_tick</code> for every clock interrupt in
+<code>kern/trap.c</code>. Also add a call to <code>sys_time_msec</code> in
+<code>syscall</code> in <code>kern/syscall.c</code> so that user space has
+access to the time.
+</p></div>
+
+Run the <tt>user/testtime.c</tt> user environment to test your time code. You
+should see the environment count down from 10 in 1 second intervals.
+
+<!--
+There is a possibility of dead lock.
+
+Lwip sends a packet to the kernel
+The kernel may block lwIP beacuase there is no where to put the packet
+The kernel tries to 
+-->
+
+<h3>The Output Environment</h3>
+
+When servicing user environment socket calls, lwIP will generate packets for
+the network card to transmit. LwIP will send each packet to be transmitted to
+the output helper environment using the <code>NSREQ_OUTPUT</code> IPC message
+with the packet attached in the page argument of the IPC message.  The output
+environment is responsible for accepting
+theses messages and forwarding the packet on to the device driver via the
+system call interface that you will soon create.
+The attached page holds a <code>struct jif_pkt</code> structure (defined in
+<code>inc/ns.h</code>).
+
+<pre>
+struct jif_pkt {
+    int jp_len;
+    char jp_data[0];
+};
+</pre>
+
+The first 4 bytes of the page, <code>jp_len</code>, represent the length of the
+packet. All subsequent bytes in the page are dedicated to the packet contents.
+<code>jp_data</code> in the above structure is a name for the bytes following
+<code>jp_len</code>.
+
+<h3>The Input Environment</h3>
+
+In addition to the timer helper environment, the input helper environment also
+sends messages to the core network server. Packets received by the network card
+need to be injected into lwIP. For every packet received by the device driver,
+the input environment pulls the packet out of kernel space (using a kernel
+system calls that you will implement) and sends the packet to the core
+server environment using the <code>NSREQ_INPUT</code> IPC message.
+The core network server expects all IPC input messages to have a page
+attached with a <code>struct jif_pkt</code> structure filled in.
+
+<p>
+The packet input functionality is separated from the core network environment
+because JOS makes it hard to simultaneous accept IPC messages and poll or wait
+for a packet from the device driver. We do not have a <code>select</code>
+system call in JOS that would allow environments to monitor multiple input
+sources to identify which input is ready to be processed.
+
+<p>
+If you take a look at <code>net/input.c</code> and <code>net/output.c</code> you
+will see that both need to be implemented. This is mainly because the
+implementation depends on your system call interface. You will write the code
+for the two helper environments after you implement the driver and system call
+interface.
+
+<h2>The Network Interface Card</h2>
+
+Writing a driver requires knowing in depth the hardware and the interface
+presented to the software. Understanding the hardware is easiest when the
+manufacturer provides manuals. Luckily for us, Intel has provided a very good
+set of manuals for the 82559ER, and you will have to get very well acquainted
+with them. 
+
+</p><p>
+<div class="todo required">
+<p><span class="header">Exercise 2.</span>
+Browse the Intel
+<a href="http://www.intel.com/design/network/products/lan/controllers/82559.htm">
+82559 page</a> and the
+<a href="http://www.intel.com/design/network/products/lan/docs/82559_docs.htm">
+82559 documentation page</a>.  In particular look at these two documents:
+
+<ol>
+	<li>Intel 8255x 10/100 Mbps Ethernet Controller Family Open Source Software Developer Manual (<a href="../../readings/8255X_OpenSDM.pdf">local copy</a>)</li>
+	<li>82559ER Fast Ethernet PCI Controller Datasheet (<a href="../../readings/82559ER_datasheet.pdf">local copy</a>)</li>
+</ol>
+
+Do not worry about the details in your first pass. It is more important to read
+this assignment write-up first to get a high level pictures of how the Intel
+chip is organized and what is needed to create a device driver.
+
+<p>
+When you do read the open source developer manual in depth, glance over
+Section 4 to learn about the PCI interface but pay very close attention to
+Section 6 as it deals with the Software Interface. In fact, most everything you
+need is in Section 6. Use the datasheet solely as a reference if you find the
+developer manual vague.
+
+<p>
+The acronyms in both documents can get overwhelming. Consult the glossary
+at the end of this lab assignment for some help.
+</p></div>
+
+</p><h3>PCI Interface</h3>
+
+<!--
+You have already seen how JOS talks to the disk: it reads/writes data into a
+predefined I/O port using inb and outb. The network card works in a similar
+fashion: the NIC device driver uses dedicated ports to interface with the
+hardware and the card has a dedicated IRQ line which it uses to notify the CPU
+of important events. The network card is connected to the CPU through a bus.
+Accessing a device on an ISA bus works exactly like accessing the disk.
+Devices using on the ISA bus are hardcoded to be available at a certain set of
+I/O ports. The OS uses inb and outb instructions to communicate with the
+device. The IRQ line used by an ISA device is also dictated by the hardware
+and can only be changed (if at all) by toggling dip switches on the physical
+card. It is easy to see how this can be a problem. Since there is no way for
+two devices to share an IRQ line or I/O port space, if there is a conflict, the
+user must resolve it manually. Even worse, to find a device that may be located
+at one of multiple I/O ports (think of a system with multiple identical
+devices), the device driver often needs to probe the set of common ports at
+which the device may be configured to see if the device "responds". This can be
+dangerous if the driver probes something the wrong way.
+-->
+
+<!--
+Drivers do not need to poke around to find a card in the
+I/O space and users do not need to worry about IRQ line conflicts. However,
+there is a catch. In an ISA bus environment, if the driver knew the port and
+IRQ number of the device, it could start using it right away. In the PCI bus
+case, there is an extra discovery and negotiation step that needs to take place
+before the device can be used.
+-->
+
+<p>
+The E100 is a PCI device, which means it plugs into the PCI bus on
+the motherboard. The PCI bus has address, data, and interrupt lines,
+and allows the CPU to communicate with PCI devices and PCI devices
+to read and write memory.
+A PCI device needs to be discovered and
+initialized before it can be used. Discovery is the process of walking the PCI
+bus looking for attached devices. Initialization is the process of dynamically
+allocating I/O and memory space as well as negotiating the IRQ line for the
+device to use.
+
+<p>
+We have provided you with PCI code in <code>kern/dev/pci.c</code>. A device on
+the PCI bus is identified by its functions (a device can have multiple
+functions). The E100 happens to have only a single function. Here is how we
+represent a PCI function in JOS:
+
+<pre>
+struct pci_func {
+    struct pci_bus *bus;
+
+    uint32_t dev;
+    uint32_t func;
+
+    uint32_t dev_id;
+    uint32_t dev_class;
+
+    uint32_t reg_base[6];
+    uint32_t reg_size[6];
+    uint8_t irq_line;
+};
+</pre>
+
+The above structure corresponds to some of the entries found in Table
+1 of Section 4 in the
+developer manual. Specifically, the last three entries of
+<code>struct pci_func</code> are of interest to us. 
+The <code>reg_base</code> array holds the negotiated values for the address at which the device
+lives, <code>reg_size</code> holds how many addresses have been allocated to each corresponding entry in 
+<code>reg_base</code>, and <code>irq_line</code> contains the IRQ line
+the kernel needs to listen on to receive interrupts from the devices. The 6
+entries in the <code>reg_base</code> array correspond to byte offsets 0x10 -
+0x24 in Table 1 in the developer manual. Make sure you understand which entries
+in <code>reg_base</code> and <code>reg_size</code> are valid and what the valid
+entries mean.
+
+<p>
+During PCI initialization, the PCI code walks the PCI bus looking for devices. As soon as it finds
+a device, it read its vendor ID and device ID and uses these two values as a key
+to search the <code>pci_attach_vendor</code> array. The array is composed of
+<code>struct pci_driver</code> entries like this:
+
+<pre>
+struct pci_driver {
+    uint32_t key1, key2;
+    int (*attachfn) (struct pci_func *pcif);
+};
+</pre>
+
+If there is an entry in the array that matches the vendor ID and device ID, the
+corresponding attach function is called to trigger device initialization.
+
+<p>
+When the attach function of the corresponding device is called, the device is
+found but it is not enabled. This means that the PCI code has found a device
+but has not yet allocated resources, such as address space and IRQ line, to the
+device (the last three elements of the <code>struct pci_func</code> structure
+are not valid). The attach function provided by the device driver needs to call
+the <code>pci_func_enable</code> function provided by the PCI code to enable the
+device and fill in the rest of the <code>struct pci_func</code>.
+
+</p><p>
+<div class="todo required">
+<p><span class="header">Exercise 3.</span>
+Implement an attach function to initialize the 82559ER. Add an entry to the
+<code>pci_attach_vendor</code> array in <code>kern/dev/pci.c</code> to trigger
+your function if a matching PCI device is found. The vendor ID and device ID for
+the 82559ER can be found in Section 4 of the developer manual.
+
+<p>
+You should create a data structure private to your driver and record the IRQ
+line and the base I/O port assigned to the device by the PCI bus. You will need
+to remember the I/O base port to be able to communicate with the E100.
+
+<p>
+We have provided the <code>kern/dev/e100.c</code> and
+<code>kern/dev/e100.h</code> files for you so that you do not need to mess with
+the make system. You may still need to include the <tt>e100.h</tt> file in
+other places in the kernel.
+</p></div>
+
+Make sure that your attach function is called when running QEMU before
+continuing.
+
+</p><h3>E100 Reset</h3>
+
+Many devices need to be reset to a consistent state before use.
+The 82559ER fortunately executes a hardware reset every time the computer boots
+up. If no other driver modifies the state of the 82559ER, it will be in a
+consistent state and ready for use as soon as the PCI bus allocates it
+resources. In our case, learning how to reset the 82559ER is a great way to get
+started with the 82559ER Software Interface and an easy way to check that you
+are using the PCI bus allocated resources correctly. Section 6.2 in the
+developer manual talks about reseting the card.
+
+<p>
+The PCI bus allows a device to be controlled by either memory mapped I/O or dedicated
+I/O ports. We advise that you use I/O ports and the <code>inb</code> and
+<code>outb</code> family of instructions to communicate with the E100. Using
+memory mapped I/O requires thinking about what happens if the compiler or the
+CPU reorders memory operations.
+
+<p>
+The 82559ER is controlled through the Control/Status Registers (CSR). The
+CSR is described in Section 6.3 in the developer manual. The CSR is a 64 byte
+long data structure that can be accessed by reading or writing ports starting
+from the base address given to the device by the PCI bus.  The base I/O port
+can be found in the <code>struct pci_func</code> PCI structure. You will be working
+exclusively with the first 12 bytes of this structure. The System Control Block
+(SCB) is the name for the first 8 bytes of the CSR. The SCB is used to control
+and get status about the device. The next 4 bytes in the CSR are called PORT
+and are used to reset the chip.
+
+<p>
+Reading and writing to the CSR is simple. For example, to read the low bits of
+the SCB status word, you can use <code>inb(base + 0x0)</code>. To read the high
+bits, you can use <code>inb(base + 0x1)</code>. To write a <code>0xd</code>
+into the SCB command word, you can use <code>outw(base + 0x2, 0xd)</code>. To
+write <code>0xdeadbeef</code> into the SCB general pointer use
+<code>outl(base + 0x4, 0xdeadbeef)</code>. The type of command used is very
+important. <code>inb</code> is used to read a byte, <code>inw</code> to read 2
+bytes and <code>inl</code> to read 4 bytes.
+
+<p>
+How do you know if you are successfully writing something to the device? That
+is where the QEMU <tt>-debug-e100</tt> command line flag helps. Every time there is a
+write or read to a register in the CSR, the QEMU emulated E100 will print a
+message to the console. Look for these messages and make sure they correspond to
+what you are doing.
+
+<p>
+There are a couple places where the 82559ER docs specify that a driver must
+delay for a certain amount of time before continuing. An example delay function
+can be found in <code>kern/console.c</code>. Each <code>inb</code> of port
+<code>0x84</code> takes about 1.25us; four of them, therefore, takes 5us.
+
+</p><p>
+<div class="todo required">
+<p><span class="header">Exercise 4.</span>
+Add code to your attach function to reset the 82559ER.
+If you set the <tt>-debug-e100</tt> flag, QEMU should tell you if the reset was
+successfully. It will print something like this:
+
+<pre>
+EE100   nic_reset               0xacea498
+</pre>
+</p></div>
+
+<h3>E100 Structure</h3>
+
+Then 82559ER is divided into two halves: the Command Unit (CU) and the Receive
+Unit (RU). The CU and RU are described in Section 6.5 of the developer manual.
+The CU and RU are processors on the 82559ER that work independently of each other.
+The CU is responsible for executing control commands sent by the driver.  For
+example, a drive can send a command to the CU to configure the device or a
+command to transmit a packet. The RU's job is to receive packets. The driver
+communicates with the CU and RU processors through the CSR and a pair of DMA
+rings (described in Section 6.4). DMA stands for Direct Memory Access,
+a general term referring to I/O devices reading and writing data in
+main memory.
+
+<h3>DMA Rings</h3>
+
+<p>
+A DMA ring is a set of buffers allocated in main memory and chained together by
+pointers. This ring is usually a circular singly-linked list where the pointers
+are physical addresses of the next buffer in the ring. The pointers need to be
+physical addresses because a DMA ring is created to be used by a device. A
+device sitting on the PCI bus (for example) does not have access to the CPU's
+MMU to translate a virtual address using paging or segmentation into a physical
+address.
+
+<p>
+The 82559ER uses DMA rings to allow the driver to specify multiple packet
+buffers for the 82559ER to use.  For example, a receive DMA ring allows the RU
+access to multiple receive packet buffers. The 82559ER has limited internal
+memory and can only buffer a few packets in its local memory. During periods of
+bursty traffic if the CPU cannot service the E100 interrupts promptly, a device
+without a DMA ring would be forced to drop packets. The 82559ER, on the other
+hand, can move incoming packets out of its limited local memory and into the
+DMA ring in the much larger main memory. The 82559ER uses DMA processors to
+move incoming packets onto the receive DMA ring without waiting for the
+driver's approval. If the CPU is too busy to handle the E100 interrupts, the
+received packets will be waiting in the DMA ring when the CPU has time to run
+the driver.
+
+<p>
+On the transmit side, the driver can place multiple packets into the transmit
+DMA ring and instruct the CU to send them all one after the other without
+interrupting the CPU (thereby reducing the overhead of sending packets by
+limiting interrupt overhead). Just like the RU, the CU also has very limited
+local memory and it would not be possible to give the CU more than two or three
+packets. The main memory transmit DMA ring gives the CU access to as many
+packet buffers as the designer of the driver wants.
+
+<p>
+The DMA rings also offer the driver a convenient way of moving data to and
+from the device. Instead of using inb/outb operations to move blocks of data
+manually to and from the device (and wasting CPU cycles to do so), the CU and
+RU use DMA processors built into the 82559ER to read and write packets in the main
+memory DMA rings.  The 82559ER accesses main memory concurrently with the CPU.
+While you are reading the documentation you should think about what
+mechanisms the 82559ER design provides to help your driver avoid races
+while using the DMA rings.
+
+<h2>Device Driver Organization</h2>
+
+The internal organization of a driver can take on many forms and depends on
+many factors. The NIC's Software Interface, performance requirements, ease of
+programing, etc. all play a role in dictating the organization of the driver.
+We will present one possible driver layout concentrating on simplicity and ease
+of understanding.
+
+<p>
+Packets sent to the E100 driver by user level environments need to be stored
+until they can be transmitted. Packets received by the E100 also need to be
+stored in the kernel until a user environment is ready to pull them out. This
+means that the E100 driver needs two queues to store incoming and outgoing
+packets.
+
+<p>
+We can use the two E100 DMA rings as queues for each respective packet type.
+Packets to be transmitted can be copied into the next available slot in the
+transmit DMA ring where they can reside until the CU transmits them. Received
+packets are already placed onto the receive DMA ring and can remain there until
+the user calls into the kernel to pull them out. 
+This device driver requires only two system calls: send packet and receive
+packet.
+
+<p>
+A system call to send a packet can be simply implemented by copying the user
+provided data into the DMA ring and notifying the E100 that there is a packet
+ready to be transmitted. Similarly, a receive packet system call can be
+implemented by copying a packet out of the receive DMA ring and into a buffer
+that can be given to the user environment. Since there is no mechanism to alert
+the user level environment that packets are available in the receive DMA ring,
+the user environment must periodically call the receive packet system call
+to empty the receive DMA to make room for new packets. This design is a
+form of polling.
+
+<p>
+There are a few corner cases left to think about. First, the easy ones. What
+if there are no more empty slots in the transmit DMA ring when the user calls
+the packet send system call? This problem would arise if the user application
+is sending more data than the E100 can transmit. We can pause the environment
+to allow the card to catch up, but we wont in fear of deadlock. Since pausing
+the user environment calling the send system call would mean blocking the
+network server, subtle deadlock situations can arise (that we rather not deal
+with) between the helper environments, user environments and the core network
+server. Instead we will simply drop the packet. 
+Next, what if the receive DMA
+ring is full and the E100 receives a packets? The E100 will buffer a couple
+packets in its local memory and will start dropping incoming packets beyond
+that. The problem is either the user level environment not polling frequently
+enough or that the E100 is receiving more data than the CPU can process. We
+will not worry too much about this situation as most applications are built to
+tolerate lost packets.
+
+<p>
+Finally, there is the harder corner case in the sense that we must handle it.
+What if the user calls the receive system call and there are no packets in the
+receive DMA ring? There are two possible solutions. We can build a convention
+into the receive packet system call to return a "try again" error asking the
+user environment to re-execute the system call at a later time. This would put
+a burden on the calling environment to calculate what is meant by a "later
+time." A second approach is to suspend the calling environment until there are
+packets in the receive queue to process. This tactic is very similar to the IPC
+receive system call. Just like in the IPC case, since we have only one kernel
+stack, as soon as we leave the kernel the state on the stack will be lost. We
+need to set a flag indicating that an environment has been suspended due to
+transmit queue overflow and record the system call arguments. If this approach
+is used, the E100 must be instructed to generate receive interrupts and the
+driver must handle them by checking and resuming the environment blocked
+waiting for a packet. The mechanism you use to solve this problem is up to you.
+
+<h2>Transmitting Packets</h2>
+
+<p>
+Your driver must construct a DMA ring in main memory in order to tell
+the 82559ER where to find the packets you wish to send. Section 6.4
+describes the precise format of the DMA ring.
+
+<p>
+A control DMA ring is composed of buffers called Control Blocks (CB). A generic
+CB looks like this:
+
+<pre>
+   +--------------+--------------+
+   |    CONTROL   |    STATUS    |
+   +--------------+--------------+
+   |            LINK             |
+   +--------------+--------------+
+   |    COMMAND SPECIFIC DATA    |
+   +--------------+--------------+
+</pre>
+
+The control bits indicate what type of command the driver is sending
+to the 82559ER.  After the 82559ER processes the command, it modifies
+the status bits to indicate that the command is complete and whether
+it succeeded. The 32-bit link word points to
+the next CB in the control DMA ring; link is a physical pointer. The data
+following the link word is variable in size and depends on the CB's control
+bits. The ring of CBs in Intel speak, is called a Command Block List (CBL).
+
+<p>
+To illustrate how a CBL can be structured we look at how a series of Transmit
+Command Blocks (TCB) can fill a command DMA ring of size 3. TCBs are CBs that
+hold packets that the driver wants the E100 to transmit. Individual TCBs look
+like this:
+
+<pre>
+   +--------------+--------------+
+   |    CONTROL   |    STATUS    |
+   +--------------+--------------+
+   |            LINK             |
+   +--------------+--------------+
+   |       TBD ARRAY ADDR        |
+   +--------------+--------------+
+   |TBD COUNT|THRS|TCB BYTE COUNT|
+   +--------------+--------------+
+   |            DATA             |
+   +--------------+--------------+
+</pre>
+
+In addition to all the generic CB entries, the TCB specific data follows the
+generic CB header. The TBD ARRAY ADDR is a physical pointer to an array. This
+pointer is used only in extended transmit mode. Only the simple mode will be
+described here; if you want to learn more about the extended mode, consult the
+developer manual. In simple mode, the TBD ARRAY ADDR is set to 0xFFFFFFFF
+(defined as null pointer for the 82559ER). TCB BYTE COUNT is the size in bytes
+of the data following the TCB (denoted as DATA in the above diagram). THRS
+should be set to 0xE0. TBD count is the number of entries in the TBD array and
+should be set to 0.
+
+<p>
+Below is a ring of three CBs with TCBs filling in individual CBs.
+
+<pre>
++---------------------------------------------------------------------------------------------------------------+
+|                                                                                                               |
++->+--------------+--------------+  +--->+--------------+--------------+  +--->+--------------+--------------+  |
+   |    CONTROL   |    STATUS    |  |    |    CONTROL   |    STATUS    |  |    |    CONTROL   |    STATUS    |  |
+   +--------------+--------------+  |    +--------------+--------------+  |    +--------------+--------------+  |
+   |            LINK      -------|--+    |            LINK      -------|--+    |            LINK      -------|--+
+   +--------------+--------------+       +--------------+--------------+       +--------------+--------------+
+   |         0xFFFFFFFF          |       |         0xFFFFFFFF          |       |         0xFFFFFFFF          |
+   +--------------+--------------+       +--------------+--------------+       +--------------+--------------+
+   |    0    |THRS|     SIZE     |       |     0   |THRS|     SIZE     |       |     0   |THRS|    SIZE      |
+ / +--------------+--------------+       +--------------+--------------+       +--------------+--------------+
+S  |                             |       |                             |       |                             |
+I  |           PACKET            |       |            PACKET           |       |            PACKET           |
+Z  |            DATA             |       |             DATA            |       |             DATA            |
+E  |                             |       |                             |       |                             |
+ \ +--------------+--------------+       +--------------+--------------+       +--------------+--------------+
+</pre>
+
+Here we can see that each CB's link pointer points to the next CB in the ring.
+These pointers are physical. The bytes that constitute the packet follow the
+TCB contiguously in memory. TCB BYTE COUNT is set to SIZE the size of each
+packet.
+
+<p>
+The developer manual gives advice on how to create the CBL. It recommends that
+the CBL be constant in size and each CB in the CBL to be pre-allocated. The
+main reason for this is E100 address caching (read the developer manual to find
+out more). If you pre-allocate all your CBs, then you must size each CB so that
+there is enough room to fit the largest CB type. The largest CB type will be a
+TCB with a data section sized to the largest Ethernet packet: 1518 bytes.
+Union types may prove useful if you have more than one CB type.
+The links in the generic CB header should all be filled in
+prior to starting the CU (this is due to the address caching the E100
+performs).
+
+<p>
+The DMA ring works as follows:
+After creating a DMA ring, the device driver tells the CU where to find the
+ring by sending the CU the physical address of the first buffer in the ring.
+Each buffer in this ring starts with a CB header. The CU examines the CB by
+accessing the buffer in main memory directly. If the CB does not contain any
+commands, the CU goes into suspend mode waiting to be reactivated. The CU
+caches the physical address of the CB it stopped at in a
+local register. When restarted, the CU will use this cached physical address
+to access the DMA ring. It is therefore critical that the links in
+the DMA ring are rarely (if at all) changed.
+
+<p>
+When the driver wants to transmit a packet, it places the packet into the
+next available buffer in the ring and restarts the 82559ER's CU. 
+The CU examines the CB it had
+previously stopped at (the physical address cached in its local register).
+If the CB is valid and
+the command is to transmit a packet, the CU reads the packet from main memory
+into an internal buffer.
+Once the packet is in the card's buffer, it can transmit it over the
+wire. When the packet is sent, the CU can set the CB status bits to indicate
+success and mark the buffer in the ring as empty. The CU then follows the link
+pointer to the next buffer in the ring and repeats the above process until it
+encounters a buffer with the suspend bit set in the control entry of the CB.
+Looking at this flow it is obvious why the link pointer in the CB must be a
+physical address: for the CU to walk the ring buffer, it needs to find the next
+buffer in the ring in physical memory.
+
+</p><h3>C Structures</h3>
+
+You'll find it convenient to use C <tt>struct</tt>s to describe the
+E100's CBs.  With a bit of luck, or reading of the C specification and
+gcc documentation, you can make this work. C lays out the elements of
+a <tt>struct</tt> in order in memory.  C typically inserts padding
+into <tt>struct</tt>s to ensure that each element is aligned to a
+boundary of its own size.  Here is how a CB header can be represented
+as a C structure:
+
+<pre>
+struct cb {
+    uint16_t status;
+    uint16_t cmd;
+    uint32_t link;
+}
+</pre>
+
+How does this correspond to the 82559ER documentation, which says that
+STATUS is in bits 15:0 and the command is in bits 31:16?  The x86 (and
+the 82559ER) are little-endian, which means the low-order bytes of a
+32-bit word come first in memory.  That is, bits 15:0 come first in
+memory, so putting status first in the <tt>struct</tt> works out.
+
+<p>
+The compiler may optimize repeated reads of a variable into a single
+load into a register. For example:
+
+<pre>
+struct cb *cb = SOME_ADDRESS;
+while ((cb->status & READY) == 0) {
+  // wait
+}
+</pre>
+
+Here <code>struct cb</code> is the same structure as defined above. The programmer
+expects the READY bit of the <code>status</code> element to change once the
+E100 is done with the CB. The compiler, however, may load <tt>cb->status</tt>
+into a register and look only at the register in the <tt>while</tt> loop.
+
+<p>
+This problem can be overcome by using the special <code>volatile</code>
+keyword. The <code>volatile</code> keyword tells the compiler to 
+always load its contents from main memory. Changing
+the <code>struct cb</code> as follows will prevent this bug:
+
+<pre>
+struct cb {
+    volatile uint16_t status;
+    uint16_t cmd;
+    uint32_t link;
+}
+</pre>
+
+</p><p>
+<div class="todo required">
+<p><span class="header">Exercise 5.</span>
+Construct a control DMA ring for the CU to use.
+You do not need to worry about configuring the device because the default
+setting are fine. You also do not need to worry about setting up the device
+MAC address because the emulated E100 has one already configured.
+</p></div>
+
+Now that you can control the CU, you need to create a system call to transmit
+packets.
+
+</p><p>
+<div class="todo required">
+<p><span class="header">Exercise 6.</span>
+Create a system call for transmitting packets. The interface is up to you.
+As described in the Device Driver Organization section the send system call
+should add the packet to the transmit DMA ring and restart the CU if it is
+idle. To free up space on the transmit DMA ring, you should take this
+opportunity to reclaim any buffers which have been marked as transmitted by the
+E100.
+</p></div>
+
+<h2>Transmitting Packets: Network Server</h2>
+
+Now that you have a system call interface to the transmit side of your device
+driver, its time to send packets. The output helper environment's goal is to
+accept <code>NSREQ_OUTPUT</code> IPC messages from the core network server and
+send the packets in the IPC message to the device driver using the send system
+call.
+
+<p>
+Be aware of the interaction between the device driver, the output environment
+and the core network server when there is no more space in the device driver's
+transmit queue. The core network server sends packets to the output environment
+using IPC. If the output environment is suspended due to a send packet system
+call because the driver has no more buffer space for new packets, the core
+network server will block waiting for the output server to accept the IPC call.
+
+</p><p>
+<div class="todo required">
+<p><span class="header">Exercise 7.</span>
+Implement <code>net/output.c</code>.
+</p></div>
+
+If all the above code works, you should be able to see the network server send
+an ARP request. Use the <tt>-pcap</tt> QEMU option to dump the packets to a capture file
+and analyze the file to find the ARP request.
+Passing the <tt>-debug-e100</tt> flag to <tt>qemu</tt>, you should see the E100
+emulator spit out log messages similar to the ones below (you may not get
+exactly the same message, but make sure they make sense):
+
+<pre>
+EE100   eepro100_cu_command     val=0x10 (cu start), status=0x0000, command=0x4004, link=0x00252870
+EE100   eepro100_cu_command     transmit, TBD array address 0x00252848, TCB byte count 0x0000, TBD count 1
+EE100   eepro100_cu_command     TBD (extended mode): buffer address 0x03bc2004, size 0x002a
+EE100   eepro100_cu_command     TBD (extended mode): buffer address 0x00000000, size 0x0000
+</pre>
+
+<h2>Receiving Packets</h2>
+
+A second DMA ring is used to receive packet from the 82559ER.  Each buffer in
+the receive DMA ring is called a Receive Frame Descriptor (RFD). The entire
+receive DMA ring is called a Receive Frame Area (RFA). The RFD is similar in
+structure to the simplified TCB. The RFD is composed of a header followed by a
+contiguous region of memory that can hold an entire maximum length packet (1518
+bytes when dealing with Ethernet). Consult the developer manual for details.
+
+<p>
+Upon capturing a packets in its local cache, the
+82559ER DMAs the data out into one of these buffers and marks the buffer as
+valid. It then raises an interrupt to tell the driver that there is a new
+packet in the receive DMA ring. This means that, depending on your device
+driver structure, you may need to write code to handle these interrupts.
+
+<p>
+Note on interrupts: Once an interrupt is asserted, it will remain asserted
+until the driver clears the interrupt. In your interrupt handler make sure to
+clear the interrupt handled as soon as you handle it. If you don't, after
+returning from your interrupt handler, the CPU will jump back into it again.
+In addition to clearing the interrupts on the E100 card, interrupts also need to
+be cleared on the PIC. Use <code>irq_eoi</code> declared in
+<code>kern/picirq.h</code> to do so.
+
+</p><p>
+<div class="todo required">
+<p><span class="header">Exercise 8.</span>
+Construct a receive DMA ring and start the RU. If you use interrupts, make sure that 
+82559ER generated interrupts are routed to your driver and are handle.
+</p></div>
+
+Just like the transmit side, you will also need to write a system call to let
+user environments receive packets.
+
+</p><p>
+<div class="todo required">
+<p><span class="header">Exercise 9.</span>
+Create a system call for receiving packets.
+As described in the Device Driver Organization section, the system call will
+pull a packet off the receive DMA ring, mark the DMA buffer as empty (so that
+the E100 can reuse it) and pass the packet to the calling user environment.
+</p></div>
+
+<h2>Receiving Packets: Network Server</h2>
+
+The Device Driver Organization section described a device driver that relied on
+polling to clear the receive DMA ring. In the network server input environment
+you will need to poll the device driver, using your receive system call, for
+received packets. You will also need to pass each packet to the core network
+server environment using the <code>NSREQ_INPUT</code> IPC message.
+
+</p><p>
+<div class="todo required">
+<p><span class="header">Exercise 10.</span>
+Implement <code>net/input.c</code>.
+</p></div>
+
+Use <code>tcpsrv</code> to test your complete driver.
+Every time the emulated E100 receives a packet, <tt>qemu</tt> with the
+<tt>-debug-e100</tt> flag will print the following message to the console:
+
+<pre>
+EE100   nic_receive             0xab13498 received frame for me, len=42
+EE100   nic_receive             command 0x0000, link 0x040ba000, addr 0xffffffff, size 1518
+</pre>
+
+<p>
+<div class="todo challenge">
+<p><span class="header">Challenge!</span>
+	Read about the EEPROM in the developers manual and write the code to
+	load the E100's MAC address out of the EEPROM. Write a system call to
+	pass the MAC address to lwIP and modify lwIP to use this new MAC
+	address.
+</div>
+
+<p>
+<div class="todo challenge">
+<p><span class="header">Challenge!</span>
+	Find out what a zero copy driver means and modify your E100 driver and
+	system call interface to be zero copy.
+
+	<h4>Addendum</h4>
+
+	The receive side flexible mode is not documented in the Developer
+	Manual. Here is a brief overview of how it works. Looking at Figure 25
+	in the Developer Manual, the reserved DWORD at offset 08h should point
+	to a Receive Buffer Descriptor (RBD).
+
+<center>
+<table>
+<tr><td align=center valign=center>
+<pre>
+   +--------------+--------------+
+   |   RESERVED   |EOF|F| COUNT  |
+   +--------------+--------------+
+   |            LINK             |
+   +--------------+--------------+
+   |         BUFFER LINK         |
+   +--------------+--------------+
+   |   RESERVED   |     SIZE     |
+   +--------------+--------------+
+</pre>
+</td>
+<td>
+	<table border=0>
+		<tr>
+			<td align=right valign=center>COUNT:</td>
+			<td>written by the device indicating how many bytes were written to the buffer (14 bits)</td>
+		</tr>
+		<tr>
+			<td align=right valign=center>EOF and F:</td>
+			<td>both are 1 bit flags; same as RFD ACTUAL COUNT flags</td>
+		</tr>
+		<tr>
+			<td align=right valign=center>LINK:</td>
+			<td>physical pointer to the next RBD</td>
+		</tr>
+		<tr>
+			<td align=right valign=center>BUFFER LINK:</td>
+			<td>the physical address of a contiguous buffer where the incoming packet will be stored</td>
+		</tr>
+		<tr>
+			<td align=right valign=center>SIZE:</td>
+			<td>size in bytes of the buffer pointed to by BUFFER LINK</td>
+		</tr>
+	</table>
+</td>
+</table>
+</center>
+
+	<p>
+	Note that the receive side flexible mode is different from the transmit
+	side flexible mode. The transmit side uses an array of TBDs while the
+	receive side relies on a linked list of RBDs. If you look at Figure 8
+	in the Developer Manual you will see exactly how to setup a RFA using
+	flexible mode.
+
+	<p>
+	In fact, you are creating two DMA rings in flexible mode. One DMA ring
+	is composed of the RFDs and a second one is composed of RBDs. The card
+	actually stores two independent pointers, one into the RFD ring and one
+	into the RBD ring. The logic behind this is that RFDs can be sized
+	small so that an average packet fills the buffer described by one RFD
+	but a large packet still can be received by spanning multiple RBDs.
+	This means for one RFD the card may use multiple RBDs. Your
+	driver must track which RFDs and which RBDs are used up.
+
+	<p>
+	The easiest way to use this mode is to create a one to one mapping
+	between RFDs and RBDs. This is done by sizing the buffer described by
+	the RBD to hold a maximum packet. This way the card cannot use up
+	multiple RBDs for each received packet. To create the RFA you can link
+	the RBDs in one ring and the RBDs in another ring. Then you can add a
+	link from each RFD to its own RBD (the linking must be ordered so that
+	if you were to place the RFD ring on top of the RBD ring, none of the
+	links from RFD to RBD will cross each other; think of a cylinder). A
+	picture explains this better:
+
+<pre>
++----------------------+
+|                      |
+|  +---+  +---+  +---+ |
++->|RFD|->|RFD|->|RFD|-+
+   +---+  +---+  +---+
+     |      |      |
+     v      v      v
+   +---+  +---+  +---+
++->|RBD|->|RBD|->|RBD|-+
+|  +---+  +---+  +---+ |
+|    |      |      |   |
+|    v      v      v   |
+|  +---+  +---+  +---+ |
+|  |BUF|  |BUF|  |BUF| |
+|  +---+  +---+  +---+ |
+|                      |
++----------------------+
+</pre>
+
+	Both the RBD COUNT and RFD ACTUAL COUNT are filled in by the device.
+	The RFD ACTUAL COUNT is the total size of the packet. The RBD COUNT is
+	the portion of the packet in that particular RBD. In the one-to-one
+	RFA, RBD COUNT and RBD ACTUAL COUNT will be the same.
+
+</div>
+
+<p>
+<div class="todo challenge">
+<p><span class="header">Challenge!</span>
+	Take the zero copy concept all the way into lwIP.
+
+	The extended TCB format shines when it is used to collect pieces of a
+	packet scattered throughout memory. The E100's extended TCB can accept
+	many different pointers to small buffers and as the E100 is sending the
+	packet it will fill its internal cache sequentially reading in each
+	data buffer at a time. The net result is that individual packet pieces
+	never need to be joined together in one contiguous memory region.
+	
+	<p>
+	A typical packet is composed of many headers. The user sends data to be
+	transmitted to lwIP in one buffer. The TCP layer wants to add a TCP
+	header, the IP layer an IP header and the MAC layer an Ethernet header.
+	Even though there are many parts to a packet, right now the parts need
+	to be joined together so that the device driver can send the final
+	packet.
+
+	<p>
+	There are many approaches to resolving the multiple header problem so
+	as to avoid buffer reallocations and needless data copies. A large
+	buffer can be preallocated to have room for all possible headers. The
+	buffer is filled from the end so that as the buffer flows through the
+	different network layers, there will always be room at the head of the
+	buffer for headers. This might be a problem because TCP and IP headers
+	can be variable in size and having large buffers can waste memory.
+
+	<p>
+	Another approach is to give to the driver the many different packet
+	pieces and have the driver take care of joining them together. The E100
+	driver can use the TCB extended mode to do exactly this. Change the
+	driver to accept packet composed of many buffers and use the TCB
+	extended format to transmit the packet without copying the data. You
+	will need to figure out how to get lwIP to stop merging the packet
+	pieces as it does right now.
+</div>
+
+<p>
+<div class="todo challenge">
+<p><span class="header">Challenge!</span>
+	Augment your system call interface to service more than one user
+	environment. This will prove useful if there are multiple network
+	stacks (and multiple network servers) each with their own IP address
+	running in user mode. The receive system call will need to decide to
+	which environment it needs to forward each incoming packet.
+
+	<p>
+	Note that the current interface cannot tell the difference between two
+	packets and if multiple environments call the packet receive system
+	call, each respective environment will get a subset of the incoming
+	packets and that subset may include packets that are not destined to
+	the calling environment.
+
+	<p>
+	Sections 2.2 and 3 in
+	<a href="http://pdos.csail.mit.edu/papers/exo:tocs.pdf">this</a>
+	Exokernel paper have an in-depth explanation of the problem
+	and a method of addressing it in a kernel like JOS. Use the paper to
+	help you get a grip on the problem, chances are you do not need a
+	solution as complex as presented in the paper.
+</div>
+
+</p><h2>Glossary of Abbreviations</h2>
+
+<pre>
+CB  Control Block
+CBL Command Block List
+CSR Control/Status Registers
+CU  Command Unit
+RFA Receive Frame Area
+RFD Receive Frame Descriptor
+RU  Receive Unit
+SCB System Control Block
+TCB Transmit Command Block
+</pre>
+
+<h2>The Web Server</h2>
+
+A web server in its simplest form sends the contents of a file to the
+requesting client. We have provided skeleton code for a very simple web server
+in <code>user/httpd.c</code>. The skeleton code deals with incoming connections
+and parses the headers. You need to implement code that deals with sending the
+contents of a file back to the client. Once you are done with the web server,
+open your favorite browser and go to
+<a href="http://localhost:8080/index.html">http://localhost:8080/index.html</a>.
+(Remember to use the <code>qemu.sh</code> script so that a request to port 8080
+on the local machine is redirected to port 80 on JOS.)
+
+</p><p>
+<div class="todo required">
+<p><span class="header">Exercise 11.</span>
+Finish the web server.
+</p></div>
+
+Questions:
+<ol>
+<li>How long approximately did it take you to do this lab?
+</li></ol>
+
+This completes the lab.
+
+</body></html>
+
+<!--  LocalWords:  IPC exokernel lib inc pingpong forktree Bochs inode inodes
+ -->
+<!--  LocalWords:  granularities Superblocks superblocks superblock IDE PIO rm
+ -->
+<!--  LocalWords:  IOPL EFLAGS obj gmake AMD's Athlon VM fd alloc FDTABLE MAXFD
+ -->
+<!--  LocalWords:  FILEBASE unmap bss libos foo umain int argc argv cputs ptr
+ -->
+<!--  LocalWords:  USTACKTOP esp arg init TMPPAGE TMPPAGETOP libmain env's
+ -->

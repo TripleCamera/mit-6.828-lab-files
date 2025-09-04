@@ -1,0 +1,49 @@
+QEMU's GDB stub always uses linear addresses, which makes the
+exercises that involve stepping through code and setting breakpoints
+after segments have been set up but before paging has been set up very
+awkward.  Not only do you have to manually translate from virtual
+addresses to linear addresses, but GDB can't step or continue after it
+hits a breakpoint.
+
+We ultimately fixed this by patching QEMU to translate all addresses
+relative to the data segment.  There may be no disadvantage to this,
+since we have to patch QEMU for the network lab and this gave us the
+opportunity to add a few other useful features to QEMU.  However, it
+might make more sense to do what most operating systems do and set up
+the initial kernel mapping using hand-written static page tables
+instead of segments.  In order to keep paging in lab 2, we could
+probably simply provide this code to the students.  They'll still have
+to build the real boot page table in lab 2, though we can avoid the
+segment-to-paging dance.
+
+
+
+Enough people try to build on non-x86 machines or try to run QEMU
+without X forwarding enabled that I wrapped QEMU on Athena in a script
+(/mit/6.828/arch/share/bin/qemu) that checks for these conditions.  If
+people start encountering these problems again, something is probably
+wrong with the script.
+
+
+
+Provide information on using QEMU and gdb and information about the
+setup of the labs.  Later in the term, a number of students complained
+that they didn't understand gdb well enough to use it and many seem
+unaware of the tools in QEMU.  Explain all of the qemu targets in the
+makefile (and how to exit from the qemu-nox targets).  Explain how to
+enter the QEMU monitor (which differs slightly between the various
+targets), and describe some of the QEMU commands that are particularly
+useful for 6.828 (info mem, info pg).  Point to some generic gdb
+tutorial for the basic commands, but explain how to switch between
+symbol-files.  Provide a link back to this information in lab 3, once
+they have user processes, since they'll only have one symbol file at
+this point and thus probably won't remember.  Mention the other things
+the makefile generates, like the .asm files.  This should probably
+also be mentioned again in lab 3, since they'll only have one asm file
+up to that point.
+
+
+
+Upgrade the GCC in the 6.828 locker on Athena.  The version in there
+is really old and misses a lot of errors that more recent versions
+catch.

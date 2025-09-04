@@ -1,0 +1,27 @@
+Add a test that causes a user_mem_check with a valid va, but an
+invalid va+len (starting on a mapped page and ending on an unmapped
+page).  This will catch students that set user_mem_check_addr to the
+start VA instead of the first invalid VA.
+
+Add a test that allocates a page, writes stuff to it, frees it, then
+allocates another page and checks that that page is zeroed to catch
+people who forget to zero pages returned by sys_page_alloc.  This bug
+doesn't show up until later labs because we never free pages at this
+point.
+
+Exercise 4 shouldn't mention popal, since they don't actually need to
+use popal (since trap never returns).
+
+The grade script should emit scores for parts A and B, like lab 4
+does.  Currently the grade script hacks around this, and it would be
+easier for students if they could see the part scores.
+
+Add an assert that interrupts are disabled upon entry to trap or
+syscall or something.  Way too many people get this wrong when setting
+up interrupt gates in the previous lab and many of them live with
+random failures for many labs to come.
+
+sys_cgetc really shouldn't spin in the kernel.  That spin should be in
+user space.  This comes back to confuse people in the shell lab
+because the shell is constantly waiting on input and thus disabling
+interrupts.
